@@ -34,6 +34,13 @@ func main() {
 	// Bring up loopback + first NIC.
 	_ = run("ip", "link", "set", "lo", "up")
 
+	// Prefer u-root modprobe if available, else try /usr/bin/modprobe.
+	if _, err := exec.LookPath("modprobe"); err != nil {
+		if _, err := os.Stat("/usr/bin/modprobe"); err == nil {
+			_ = os.Setenv("PATH", "/usr/bin:"+os.Getenv("PATH"))
+		}
+	}
+
 	iface := firstNonLoopbackIface()
 	if iface == "" {
 		// Try loading common NIC modules for QEMU before re-scanning.

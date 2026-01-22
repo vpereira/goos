@@ -24,9 +24,11 @@ UROOT_CMDS := \
   github.com/u-root/u-root/cmds/core/dhclient \
   github.com/u-root/u-root/cmds/core/ls \
   github.com/u-root/u-root/cmds/core/cat \
+  github.com/u-root/u-root/cmds/core/true \
   github.com/u-root/u-root/cmds/core/mkdir \
   github.com/u-root/u-root/cmds/core/ping \
-  github.com/u-root/u-root/cmds/core/dmesg
+  github.com/u-root/u-root/cmds/core/dmesg \
+  github.com/u-root/u-root/cmds/exp/modprobe
 
 .PHONY: all init kernel kernel-arch initramfs initramfs-arch iso qemu clean
 
