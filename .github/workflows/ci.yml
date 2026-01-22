@@ -61,19 +61,7 @@ jobs:
           mkdir -p build/iso/boot/grub
           cp -f build/vmlinuz build/iso/boot/vmlinuz
           cp -f build/initramfs.cpio build/iso/boot/initramfs.cpio
-          cp -f build/iso/boot/grub/grub.cfg build/iso/boot/grub/grub.cfg || true
-          # In case you didn't commit grub.cfg yet, generate it here:
-          if [ ! -f build/iso/boot/grub/grub.cfg ]; then
-            cat > build/iso/boot/grub/grub.cfg <<'EOF'
-          set timeout=0
-          set default=0
-
-          menuentry "goos (u-root + Go init)" {
-            linux /boot/vmlinuz console=ttyS0 rdinit=/init
-            initrd /boot/initramfs.cpio
-          }
-          EOF
-          fi
+          cp -f assets/grub/grub.cfg build/iso/boot/grub/grub.cfg
           # grub-mkrescue relies on xorriso. :contentReference[oaicite:4]{index=4}
           grub-mkrescue -o build/goos.iso build/iso
 

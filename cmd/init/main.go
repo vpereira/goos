@@ -60,13 +60,15 @@ func main() {
 	fmt.Println("READY")
 
 	b, _ := os.ReadFile("/proc/cmdline")
-	if strings.Contains(string(b), "goos.shell=1") {
-		if _, err := exec.LookPath("gosh"); err == nil {
-			log("goos: starting gosh (Ctrl+A X to exit QEMU -nographic)")
-			_ = syscall.Exec(mustLookPath("gosh"), []string{"gosh"}, os.Environ())
-		}	
+	if strings.Contains(string(b), "goos.shell=0") {
+		log("goos: shell disabled via cmdline; idling")
+		return
 	}
 
+	if _, err := exec.LookPath("gosh"); err == nil {
+		log("goos: starting gosh (Ctrl+A X to exit QEMU -nographic)")
+		_ = syscall.Exec(mustLookPath("gosh"), []string{"gosh"}, os.Environ())
+	}
 
 	log("goos: gosh not found; idling")
 }
@@ -128,4 +130,3 @@ func log(s string) {
 	// Also try kernel message buffer if present.
 	_ = os.WriteFile(filepath.Join("/dev", "kmsg"), []byte(s+"\n"), 0o644)
 }
-
