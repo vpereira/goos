@@ -77,19 +77,9 @@ iso: initramfs kernel
 	mkdir -p $(ISODIR)/boot/grub
 	cp -f $(VMLINUX) $(ISODIR)/boot/vmlinuz
 	cp -f $(INITRAMFS) $(ISODIR)/boot/initramfs.cpio
-	@if [ -f build/iso/boot/grub/grub.cfg ]; then \
-		cp -f build/iso/boot/grub/grub.cfg $(ISODIR)/boot/grub/grub.cfg; \
-	else \
-		cat > $(ISODIR)/boot/grub/grub.cfg <<'EOF'; \
-set timeout=0; \
-set default=0; \
-menuentry "goos (u-root + Go uinit)" { \
-  linux /boot/vmlinuz console=ttyS0; \
-  initrd /boot/initramfs.cpio; \
-} \
-EOF \
-	fi
+	cp -f assets/grub/grub.cfg $(ISODIR)/boot/grub/grub.cfg
 	grub-mkrescue -o $(ISO) $(ISODIR)
+
 
 # Boot the ISO in QEMU (closest to Proxmox experience). Add virtio-rng to avoid entropy stalls.
 qemu: iso
