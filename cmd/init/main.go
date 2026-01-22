@@ -34,17 +34,18 @@ func main() {
 	// Bring up loopback + first NIC.
 	_ = run("ip", "link", "set", "lo", "up")
 
-	// Prefer u-root modprobe if available, else try /usr/bin/modprobe.
-	if _, err := exec.LookPath("modprobe"); err != nil {
-		if _, err := os.Stat("/usr/bin/modprobe"); err == nil {
-			_ = os.Setenv("PATH", "/usr/bin:"+os.Getenv("PATH"))
-		}
-	}
-
 	iface := firstNonLoopbackIface()
 	if iface == "" {
 		// Try loading common NIC modules for QEMU before re-scanning.
 		tryLoadNetModules([]string{"e1000", "virtio_net", "rtl8139", "e1000e"})
+		iface = firstNonLoopbackIface()
+	}
+	if iface == "" {
+		kver := kernelRelease()
+		if kver != "" {
+			mod := fmt.Sprintf("/lib/modules/%s/kernel/drivers/net/ethernet/intel/e1000/e1000.ko", kver)
+			_ = run("insmod", mod)
+		}
 		iface = firstNonLoopbackIface()
 	}
 	if iface == "" {
@@ -137,14 +138,38 @@ func firstNonLoopbackIface() string {
 	return ifaces[0]
 }
 
+func kernelRelease() string {
+	b, err := os.ReadFile("/proc/sys/kernel/osrelease")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
 func tryLoadNetModules(mods []string) {
+	if !hasModuleDeps() {
+		return
+	}
 	if _, err := exec.LookPath("modprobe"); err != nil {
-		log("goos: modprobe not found in PATH")
 		return
 	}
 	for _, m := range mods {
 		_ = run("modprobe", m)
 	}
+}
+
+func hasModuleDeps() bool {
+	kver := kernelRelease()
+	if kver == "" {
+		return false
+	}
+	for _, base := range []string{"/lib/modules", "/usr/lib/modules"} {
+		p := filepath.Join(base, kver, "modules.dep")
+		if _, err := os.Stat(p); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func log(s string) {

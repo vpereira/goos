@@ -11,6 +11,9 @@ INITBIN    := $(BUILD)/goos-init
 INITRAMFS  := $(BUILD)/initramfs.cpio
 INITRAMFS_ARCH := $(BUILD)/initramfs-arch.img
 INITRAMFS_MERGED := $(BUILD)/initramfs-merged.cpio
+KVER       ?= $(shell uname -r)
+E1000_ZST  := /usr/lib/modules/$(KVER)/kernel/drivers/net/ethernet/intel/e1000/e1000.ko.zst
+E1000_KO   := $(BUILD)/e1000.ko
 ISO        := $(BUILD)/goos.iso
 
 # Pin u-root for deterministic builds
@@ -28,6 +31,7 @@ UROOT_CMDS := \
   github.com/u-root/u-root/cmds/core/mkdir \
   github.com/u-root/u-root/cmds/core/ping \
   github.com/u-root/u-root/cmds/core/dmesg \
+  github.com/u-root/u-root/cmds/core/insmod \
   github.com/u-root/u-root/cmds/exp/modprobe
 
 .PHONY: all init kernel kernel-arch initramfs initramfs-arch iso qemu clean
@@ -97,8 +101,17 @@ kernel-arch: | $(BUILD)
 # Build initramfs (u-root + our uinit). We force module mode so u-root uses your repo's go.mod/go.sum.
 initramfs: init Makefile | $(BUILD)
 	go install github.com/u-root/u-root@$(UROOT_VER)
+	@set -e; \
+	FILES_ARGS=""; \
+	if command -v zstd >/dev/null 2>&1 && [ -r "$(E1000_ZST)" ]; then \
+	  zstd -d -c "$(E1000_ZST)" > "$(E1000_KO)"; \
+	  FILES_ARGS="-files $(E1000_KO):/lib/modules/$(KVER)/kernel/drivers/net/ethernet/intel/e1000/e1000.ko"; \
+	else \
+	  echo "WARN: e1000 module not found or zstd missing; skipping e1000.ko"; \
+	fi; \
 	GO111MODULE=on u-root -build=bb -format=cpio -o $(INITRAMFS) \
 	  -files "$(INITBIN):bbin/goos-init" \
+	  $$FILES_ARGS \
 	  -uinitcmd="/bbin/goos-init" \
 	  -defaultsh=gosh \
 	  $(UROOT_CMDS)
