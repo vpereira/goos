@@ -22,7 +22,8 @@ UROOT_CMDS := \
   github.com/u-root/u-root/cmds/core/dhclient \
   github.com/u-root/u-root/cmds/core/ls \
   github.com/u-root/u-root/cmds/core/cat \
-  github.com/u-root/u-root/cmds/core/mkdir
+  github.com/u-root/u-root/cmds/core/mkdir \
+  github.com/u-root/u-root/cmds/core/ping
 
 .PHONY: all init kernel initramfs iso qemu clean
 
