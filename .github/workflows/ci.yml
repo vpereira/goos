@@ -81,21 +81,35 @@ jobs:
         run: |
           set -euxo pipefail
 
-          run_qemu() {
-            qemu-system-x86_64 -m 1024 -nographic "$@" \
-                               -kernel build/vmlinuz \
-                               -initrd build/initramfs.cpio \
-                               -append "console=ttyS0 goos.shell=0"
-          }
+          # Run QEMU in background with TCG (KVM not available on GitHub Actions)
+          qemu-system-x86_64 -m 1024 -nographic -accel tcg \
+            -kernel build/vmlinuz \
+            -initrd build/initramfs.cpio \
+            -append "console=ttyS0 goos.shell=0" \
+            > build/boot.log 2>&1 &
+          QEMU_PID=$!
 
-          # Try KVM, fall back to TCG if it errors
-          if run_qemu -enable-kvm -cpu host 2>&1 | tee build/boot.log; then
-            :
-          else
-            run_qemu -accel tcg 2>&1 | tee build/boot.log
-          fi
+          # Wait up to 120s for READY
+          for i in $(seq 1 120); do
+            if grep -q READY build/boot.log 2>/dev/null; then
+              echo "READY found, stopping QEMU"
+              kill $QEMU_PID 2>/dev/null || true
+              wait $QEMU_PID 2>/dev/null || true
+              cat build/boot.log
+              exit 0
+            fi
+            if ! kill -0 $QEMU_PID 2>/dev/null; then
+              echo "QEMU exited unexpectedly"
+              cat build/boot.log
+              exit 1
+            fi
+            sleep 1
+          done
 
-          grep -q READY build/boot.log
+          echo "Timeout waiting for READY"
+          kill $QEMU_PID 2>/dev/null || true
+          cat build/boot.log
+          exit 1
 
 
       - name: Upload artifacts
