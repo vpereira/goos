@@ -9,6 +9,8 @@ ISODIR     := $(BUILD)/iso
 VMLINUX    := $(BUILD)/vmlinuz
 INITBIN    := $(BUILD)/goos-init
 INITRAMFS  := $(BUILD)/initramfs.cpio
+INITRAMFS_ARCH := $(BUILD)/initramfs-arch.img
+INITRAMFS_MERGED := $(BUILD)/initramfs-merged.cpio
 ISO        := $(BUILD)/goos.iso
 
 # Pin u-root for deterministic builds
@@ -23,9 +25,10 @@ UROOT_CMDS := \
   github.com/u-root/u-root/cmds/core/ls \
   github.com/u-root/u-root/cmds/core/cat \
   github.com/u-root/u-root/cmds/core/mkdir \
-  github.com/u-root/u-root/cmds/core/ping
+  github.com/u-root/u-root/cmds/core/ping \
+  github.com/u-root/u-root/cmds/core/dmesg
 
-.PHONY: all init kernel kernel-arch initramfs iso qemu clean
+.PHONY: all init kernel kernel-arch initramfs initramfs-arch iso qemu clean
 
 all: qemu
 
@@ -98,6 +101,12 @@ initramfs: init Makefile | $(BUILD)
 	  -defaultsh=gosh \
 	  $(UROOT_CMDS)
 
+# Build an Arch initramfs with kernel modules and merge it with u-root.
+initramfs-arch: initramfs | $(BUILD)
+	sudo mkinitcpio -c mkinitcpio-goos.conf -g $(INITRAMFS_ARCH)
+	sudo chmod a+r $(INITRAMFS_ARCH)
+	cat $(INITRAMFS_ARCH) $(INITRAMFS) > $(INITRAMFS_MERGED)
+
 # Build a bootable GRUB ISO (good for Proxmox upload)
 iso: initramfs kernel
 	mkdir -p $(ISODIR)/boot/grub
@@ -110,11 +119,13 @@ iso: initramfs kernel
 # Boot the kernel+initramfs in QEMU. Add virtio-rng to avoid entropy stalls.
 qemu: kernel-arch initramfs
 	@if [ -c /dev/kvm ]; then ACCEL="-enable-kvm -cpu host"; else ACCEL="-accel tcg"; fi; \
+	INITRD="$(INITRAMFS)"; \
+	if [ -r "$(INITRAMFS_MERGED)" ]; then INITRD="$(INITRAMFS_MERGED)"; fi; \
 	qemu-system-x86_64 -m 1024 -nographic $$ACCEL \
 	  -device virtio-rng-pci \
-	  -nic tap\
+	  -netdev user,id=n0 -device e1000,netdev=n0 \
 	  -kernel $(VMLINUX) \
-	  -initrd $(INITRAMFS) \
+	  -initrd $$INITRD \
 	  -append "console=ttyS0 goos.shell=1"
 
 clean:

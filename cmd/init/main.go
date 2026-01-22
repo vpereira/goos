@@ -36,6 +36,11 @@ func main() {
 
 	iface := firstNonLoopbackIface()
 	if iface == "" {
+		// Try loading common NIC modules for QEMU before re-scanning.
+		tryLoadNetModules([]string{"e1000", "virtio_net", "rtl8139", "e1000e"})
+		iface = firstNonLoopbackIface()
+	}
+	if iface == "" {
 		log("goos: no non-loopback interface found")
 	} else {
 		_ = run("ip", "link", "set", iface, "up")
@@ -123,6 +128,16 @@ func firstNonLoopbackIface() string {
 		return ""
 	}
 	return ifaces[0]
+}
+
+func tryLoadNetModules(mods []string) {
+	if _, err := exec.LookPath("modprobe"); err != nil {
+		log("goos: modprobe not found in PATH")
+		return
+	}
+	for _, m := range mods {
+		_ = run("modprobe", m)
+	}
 }
 
 func log(s string) {
