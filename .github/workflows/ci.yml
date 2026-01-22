@@ -31,14 +31,23 @@ jobs:
           sudo chmod a+r build/vmlinuz
           file build/vmlinuz
 
-      - name: Build init + initramfs (u-root + dhclient)
+      - name: Build init + initramfs (u-root + uinit)
         run: |
           set -eux
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o build/init ./cmd/init
-          go install github.com/u-root/u-root@latest
-          # u-root supports adding extra files via -files. :contentReference[oaicite:3]{index=3}
-          u-root -build=bb -format=cpio -o build/initramfs.cpio \
-            -files "build/init:/init" \
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o build/goos-init ./cmd/init
+
+          # Pin u-root
+          go install github.com/u-root/u-root@v0.15.0
+
+          # Build initramfs:
+          # - include u-root init command so /init exists
+          # - install our binary into /bbin
+          # - run it as uinit
+          GO111MODULE=on u-root -build=bb -format=cpio -o build/initramfs.cpio \
+            -files "build/goos-init:bbin/goos-init" \
+            -uinitcmd="/bbin/goos-init" \
+            -defaultsh=gosh \
+            github.com/u-root/u-root/cmds/core/init \
             github.com/u-root/u-root/cmds/core/gosh \
             github.com/u-root/u-root/cmds/core/ip \
             github.com/u-root/u-root/cmds/core/dhclient \
