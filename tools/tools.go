@@ -1,5 +1,3 @@
-//go:build tools
-
 package tools
 
 import (
@@ -9,5 +7,6 @@ import (
 	_ "github.com/u-root/u-root/cmds/core/ip"
 	_ "github.com/u-root/u-root/cmds/core/ls"
 	_ "github.com/u-root/u-root/cmds/core/mkdir"
+	_ "github.com/u-root/u-root/pkg/kmodule"
 )
 
