@@ -83,7 +83,9 @@ jobs:
 
           run_qemu() {
             qemu-system-x86_64 -m 1024 -nographic "$@" \
-              -cdrom build/goos.iso -append "console=ttyS0 goos.shell=0"
+                               -kernel build/vmlinuz \
+                               -initrd build/initramfs.cpio \
+                               -append "console=ttyS0 goos.shell=0"
           }
 
           # Try KVM, fall back to TCG if it errors
