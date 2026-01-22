@@ -36,16 +36,39 @@ init: | $(BUILD)
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o $(INITBIN) ./cmd/init
 
 # Copy a host kernel for QEMU dev
+# tried to cover almost all dists there
 kernel: | $(BUILD)
-	cp -L /boot/vmlinuz-`uname -r` $(VMLINUX) 2>/dev/null || \
-	(ls -1 /boot/vmlinuz-* 2>/dev/null | tail -n 1 | xargs -I{} cp -L {} $(VMLINUX))
+	@set -e; \
+	# Try common distro locations / names
+	for k in \
+	  /boot/vmlinuz-`uname -r` \
+	  /boot/vmlinuz-linux \
+	  /boot/vmlinuz-linux-lts \
+	  /boot/vmlinuz \
+	  ; do \
+	    if [ -r "$$k" ]; then \
+	      echo "Using kernel: $$k"; \
+	      cp -L "$$k" "$(VMLINUX)"; \
+	      exit 0; \
+	    fi; \
+	  done; \
+	# Fallback: any vmlinuz* file
+	k=$$(ls -1 /boot/vmlinuz* 2>/dev/null | head -n 1); \
+	if [ -n "$$k" ] && [ -r "$$k" ]; then \
+	  echo "Using kernel: $$k"; \
+	  cp -L "$$k" "$(VMLINUX)"; \
+	  exit 0; \
+	fi; \
+	echo "ERROR: Could not find readable kernel image under /boot (looked for vmlinuz-*, vmlinuz-linux, vmlinuz-linux-lts)"; \
+	exit 1
+
 
 # Build initramfs (u-root + our uinit). We force module mode so u-root uses your repo's go.mod/go.sum.
 initramfs: init | $(BUILD)
 	go install github.com/u-root/u-root@$(UROOT_VER)
 	GO111MODULE=on u-root -build=bb -format=cpio -o $(INITRAMFS) \
-	  -files "$(INITBIN):bin/goos-init" \
-	  -uinitcmd="bin/goos-init" \
+	  -files "$(INITBIN):bbin/goos-init" \
+	  -uinitcmd="/bbin/goos-init" \
 	  -defaultsh=gosh \
 	  $(UROOT_CMDS)
 

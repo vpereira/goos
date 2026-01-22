@@ -26,7 +26,9 @@ jobs:
             sudo apt-get install -y linux-image-generic
           fi
           mkdir -p build
-          ls -1 /boot/vmlinuz-* | tail -n 1 | xargs -I{} cp -L {} build/vmlinuz
+          K=$(ls -1 /boot/vmlinuz-* | tail -n 1)
+          sudo cp -L "$K" build/vmlinuz
+          sudo chmod a+r build/vmlinuz
           file build/vmlinuz
 
       - name: Build init + initramfs (u-root + dhclient)
