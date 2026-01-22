@@ -25,7 +25,7 @@ UROOT_CMDS := \
   github.com/u-root/u-root/cmds/core/mkdir \
   github.com/u-root/u-root/cmds/core/ping
 
-.PHONY: all init kernel initramfs iso qemu clean
+.PHONY: all init kernel kernel-arch initramfs iso qemu clean
 
 all: qemu
 
@@ -40,7 +40,10 @@ init: | $(BUILD)
 # tried to cover almost all dists there
 kernel: | $(BUILD)
 	@set -e; \
-	# Try common distro locations / names
+	if [ -r "$(VMLINUX)" ]; then \
+	  echo "Using existing kernel: $(VMLINUX)"; \
+	  exit 0; \
+	fi; \
 	for k in \
 	  /boot/vmlinuz-`uname -r` \
 	  /boot/vmlinuz-linux \
@@ -53,15 +56,37 @@ kernel: | $(BUILD)
 	      exit 0; \
 	    fi; \
 	  done; \
-	# Fallback: any vmlinuz* file
+	k=$$(ls -1 /usr/lib/modules/*/vmlinuz 2>/dev/null | sort | tail -n 1); \
+	if [ -n "$$k" ] && [ -r "$$k" ]; then \
+	  echo "Using kernel: $$k"; \
+	  cp -L "$$k" "$(VMLINUX)"; \
+	  exit 0; \
+	fi; \
 	k=$$(ls -1 /boot/vmlinuz* 2>/dev/null | head -n 1); \
 	if [ -n "$$k" ] && [ -r "$$k" ]; then \
 	  echo "Using kernel: $$k"; \
 	  cp -L "$$k" "$(VMLINUX)"; \
 	  exit 0; \
 	fi; \
-	echo "ERROR: Could not find readable kernel image under /boot (looked for vmlinuz-*, vmlinuz-linux, vmlinuz-linux-lts)"; \
+	echo "ERROR: Could not find readable kernel image under /boot or /usr/lib/modules"; \
 	exit 1
+
+# Arch Linux helper: install the stock kernel and copy it into build/.
+kernel-arch: | $(BUILD)
+	sudo pacman -S --needed --noconfirm linux
+	@set -e; \
+	K=""; \
+	if [ -r /boot/vmlinuz-linux ]; then \
+	  K=/boot/vmlinuz-linux; \
+	else \
+	  K=$$(ls -1 /usr/lib/modules/*/vmlinuz 2>/dev/null | sort | tail -n 1); \
+	fi; \
+	if [ -z "$$K" ] || [ ! -r "$$K" ]; then \
+	  echo "ERROR: Could not find Arch kernel image in /boot/vmlinuz-linux or /usr/lib/modules/*/vmlinuz"; \
+	  exit 1; \
+	fi; \
+	echo "Using kernel: $$K"; \
+	sudo cp -L "$$K" $(VMLINUX)
 
 
 # Build initramfs (u-root + our uinit). We force module mode so u-root uses your repo's go.mod/go.sum.
@@ -82,12 +107,15 @@ iso: initramfs kernel
 	grub-mkrescue -o $(ISO) $(ISODIR)
 
 
-# Boot the ISO in QEMU (closest to Proxmox experience). Add virtio-rng to avoid entropy stalls.
-qemu: iso
+# Boot the kernel+initramfs in QEMU. Add virtio-rng to avoid entropy stalls.
+qemu: kernel-arch initramfs
 	@if [ -c /dev/kvm ]; then ACCEL="-enable-kvm -cpu host"; else ACCEL="-accel tcg"; fi; \
 	qemu-system-x86_64 -m 1024 -nographic $$ACCEL \
 	  -device virtio-rng-pci \
-	  -cdrom $(ISO)
+	  -nic tap\
+	  -kernel $(VMLINUX) \
+	  -initrd $(INITRAMFS) \
+	  -append "console=ttyS0 goos.shell=1"
 
 clean:
 	rm -rf $(BUILD)
