@@ -105,7 +105,7 @@ initramfs: init Makefile | $(BUILD)
 
 # Build an Arch initramfs with kernel modules and merge it with u-root.
 initramfs-arch: initramfs | $(BUILD)
-	sudo mkinitcpio -c mkinitcpio-goos.conf -g $(INITRAMFS_ARCH)
+	sudo mkinitcpio -c $(abspath mkinitcpio-goos.conf) -g $(INITRAMFS_ARCH)
 	sudo chmod a+r $(INITRAMFS_ARCH)
 	cat $(INITRAMFS_ARCH) $(INITRAMFS) > $(INITRAMFS_MERGED)
 
