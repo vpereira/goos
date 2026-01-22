@@ -59,11 +59,14 @@ func main() {
 	// CI marker.
 	fmt.Println("READY")
 
-	// Optional: drop into a shell for interactive dev.
-	if _, err := exec.LookPath("gosh"); err == nil {
-		log("goos: starting gosh (Ctrl+A X to exit QEMU -nographic)")
-		_ = syscall.Exec(mustLookPath("gosh"), []string{"gosh"}, os.Environ())
+	if os.Getenv("GOOS_SHELL") == "1" {
+		if _, err := exec.LookPath("gosh"); err == nil {
+			log("goos: starting gosh (Ctrl+A X to exit QEMU -nographic)")
+			_ = syscall.Exec(mustLookPath("gosh"), []string{"gosh"}, os.Environ())
+		}	
 	}
+
+
 
 	log("goos: gosh not found; idling")
 }
