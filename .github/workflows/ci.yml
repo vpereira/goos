@@ -80,18 +80,20 @@ jobs:
       - name: Boot smoke test from ISO (expects READY)
         run: |
           set -euxo pipefail
-          ACCEL="-accel tcg"
-          if [ -c /dev/kvm ]; then
-            ACCEL="-enable-kvm -cpu host"
+
+          run_qemu() {
+            qemu-system-x86_64 -m 1024 -nographic "$@" \
+              -cdrom build/goos.iso
+          }
+
+          # Try KVM, fall back to TCG if it errors
+          if run_qemu -enable-kvm -cpu host 2>&1 | tee build/boot.log; then
+            :
+          else
+            run_qemu -accel tcg 2>&1 | tee build/boot.log
           fi
 
-          timeout 90s bash -c "
-            qemu-system-x86_64 -m 1024 -nographic $ACCEL \
-              -cdrom build/goos.iso \
-            | tee build/boot.log
-          " || true
-
-          grep -q 'READY' build/boot.log
+          grep -q READY build/boot.log
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
