@@ -65,7 +65,7 @@ kernel: | $(BUILD)
 
 
 # Build initramfs (u-root + our uinit). We force module mode so u-root uses your repo's go.mod/go.sum.
-initramfs: init | $(BUILD)
+initramfs: init Makefile | $(BUILD)
 	go install github.com/u-root/u-root@$(UROOT_VER)
 	GO111MODULE=on u-root -build=bb -format=cpio -o $(INITRAMFS) \
 	  -files "$(INITBIN):bbin/goos-init" \
@@ -91,4 +91,3 @@ qemu: iso
 
 clean:
 	rm -rf $(BUILD)
-

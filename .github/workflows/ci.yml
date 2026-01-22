@@ -22,12 +22,10 @@ jobs:
       - name: Ensure a kernel is available
         run: |
           set -eux
-          if ! ls /boot/vmlinuz-* >/dev/null 2>&1; then
-            sudo apt-get install -y linux-image-generic
-          fi
+          sudo apt-get update
+          sudo apt-get install -y linux-image-generic
           mkdir -p build
-          K=$(ls -1 /boot/vmlinuz-* | tail -n 1)
-          sudo cp -L "$K" build/vmlinuz
+          sudo cp -L "$(ls /boot/vmlinuz-*generic* | tail -n 1)" build/vmlinuz
           sudo chmod a+r build/vmlinuz
           file build/vmlinuz
 
@@ -109,4 +107,3 @@ jobs:
             build/vmlinuz
             build/initramfs.cpio
             build/boot.log
-
