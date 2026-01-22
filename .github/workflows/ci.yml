@@ -1,0 +1,94 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-boot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22.x"
+
+      - name: Install QEMU + ISO tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 grub-pc-bin xorriso
+
+      - name: Ensure a kernel is available
+        run: |
+          set -eux
+          if ! ls /boot/vmlinuz-* >/dev/null 2>&1; then
+            sudo apt-get install -y linux-image-generic
+          fi
+          mkdir -p build
+          ls -1 /boot/vmlinuz-* | tail -n 1 | xargs -I{} cp -L {} build/vmlinuz
+          file build/vmlinuz
+
+      - name: Build init + initramfs (u-root + dhclient)
+        run: |
+          set -eux
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o build/init ./cmd/init
+          go install github.com/u-root/u-root@latest
+          # u-root supports adding extra files via -files. :contentReference[oaicite:3]{index=3}
+          u-root -build=bb -format=cpio -o build/initramfs.cpio \
+            -files "build/init:/init" \
+            github.com/u-root/u-root/cmds/core/gosh \
+            github.com/u-root/u-root/cmds/core/ip \
+            github.com/u-root/u-root/cmds/core/dhclient \
+            github.com/u-root/u-root/cmds/core/ls \
+            github.com/u-root/u-root/cmds/core/cat \
+            github.com/u-root/u-root/cmds/core/mkdir
+
+      - name: Build GRUB ISO
+        run: |
+          set -eux
+          mkdir -p build/iso/boot/grub
+          cp -f build/vmlinuz build/iso/boot/vmlinuz
+          cp -f build/initramfs.cpio build/iso/boot/initramfs.cpio
+          cp -f build/iso/boot/grub/grub.cfg build/iso/boot/grub/grub.cfg || true
+          # In case you didn't commit grub.cfg yet, generate it here:
+          if [ ! -f build/iso/boot/grub/grub.cfg ]; then
+            cat > build/iso/boot/grub/grub.cfg <<'EOF'
+          set timeout=0
+          set default=0
+
+          menuentry "goos (u-root + Go init)" {
+            linux /boot/vmlinuz console=ttyS0 rdinit=/init
+            initrd /boot/initramfs.cpio
+          }
+          EOF
+          fi
+          # grub-mkrescue relies on xorriso. :contentReference[oaicite:4]{index=4}
+          grub-mkrescue -o build/goos.iso build/iso
+
+      - name: Boot smoke test from ISO (expects READY)
+        run: |
+          set -euxo pipefail
+          ACCEL="-accel tcg"
+          if [ -c /dev/kvm ]; then
+            ACCEL="-enable-kvm -cpu host"
+          fi
+
+          timeout 90s bash -c "
+            qemu-system-x86_64 -m 1024 -nographic $ACCEL \
+              -cdrom build/goos.iso \
+            | tee build/boot.log
+          " || true
+
+          grep -q 'READY' build/boot.log
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: goos-iso
+          path: |
+            build/goos.iso
+            build/vmlinuz
+            build/initramfs.cpio
+            build/boot.log
+
