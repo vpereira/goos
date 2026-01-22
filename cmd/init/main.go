@@ -59,13 +59,13 @@ func main() {
 	// CI marker.
 	fmt.Println("READY")
 
-	if os.Getenv("GOOS_SHELL") == "1" {
+	b, _ := os.ReadFile("/proc/cmdline")
+	if strings.Contains(string(b), "goos.shell=1") {
 		if _, err := exec.LookPath("gosh"); err == nil {
 			log("goos: starting gosh (Ctrl+A X to exit QEMU -nographic)")
 			_ = syscall.Exec(mustLookPath("gosh"), []string{"gosh"}, os.Environ())
 		}	
 	}
-
 
 
 	log("goos: gosh not found; idling")
