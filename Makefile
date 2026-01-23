@@ -130,25 +130,25 @@ initramfs: init Makefile | $(BUILD)
 	fi; \
 	if command -v zstd >/dev/null 2>&1 && [ -r "$(E1000_ZST)" ]; then \
 	  zstd -d -c "$(E1000_ZST)" > "$(E1000_KO)"; \
-	  FILES_ARGS="-files $(E1000_KO):/lib/modules/$(KVER)/kernel/drivers/net/ethernet/intel/e1000/e1000.ko"; \
+	  FILES_ARGS="-files $(E1000_KO):lib/modules/$(KVER)/kernel/drivers/net/ethernet/intel/e1000/e1000.ko"; \
 	else \
 	  echo "WARN: e1000 module not found or zstd missing; skipping e1000.ko"; \
 	fi; \
 	if command -v zstd >/dev/null 2>&1 && [ -r "$(FAILOVER_ZST)" ]; then \
 	  zstd -d -c "$(FAILOVER_ZST)" > "$(FAILOVER_KO)"; \
-	  FILES_ARGS="$$FILES_ARGS -files $(FAILOVER_KO):/lib/modules/$(KVER)/kernel/net/core/failover.ko"; \
+	  FILES_ARGS="$$FILES_ARGS -files $(FAILOVER_KO):lib/modules/$(KVER)/kernel/net/core/failover.ko"; \
 	else \
 	  echo "WARN: failover module not found or zstd missing; skipping failover.ko"; \
 	fi; \
 	if command -v zstd >/dev/null 2>&1 && [ -r "$(VIRTIO_NET_ZST)" ]; then \
 	  zstd -d -c "$(VIRTIO_NET_ZST)" > "$(VIRTIO_NET_KO)"; \
-	  FILES_ARGS="$$FILES_ARGS -files $(VIRTIO_NET_KO):/lib/modules/$(KVER)/kernel/drivers/net/virtio_net.ko"; \
+	  FILES_ARGS="$$FILES_ARGS -files $(VIRTIO_NET_KO):lib/modules/$(KVER)/kernel/drivers/net/virtio_net.ko"; \
 	else \
 	  echo "WARN: virtio_net module not found or zstd missing; skipping virtio_net.ko"; \
 	fi; \
 	if command -v zstd >/dev/null 2>&1 && [ -r "$(NET_FAILOVER_ZST)" ]; then \
 	  zstd -d -c "$(NET_FAILOVER_ZST)" > "$(NET_FAILOVER_KO)"; \
-	  FILES_ARGS="$$FILES_ARGS -files $(NET_FAILOVER_KO):/lib/modules/$(KVER)/kernel/drivers/net/net_failover.ko"; \
+	  FILES_ARGS="$$FILES_ARGS -files $(NET_FAILOVER_KO):lib/modules/$(KVER)/kernel/drivers/net/net_failover.ko"; \
 	else \
 	  echo "WARN: net_failover module not found or zstd missing; skipping net_failover.ko"; \
 	fi; \
@@ -165,10 +165,10 @@ initramfs: init Makefile | $(BUILD)
 	  FILES_ARGS="$$FILES_ARGS -files $(KRAGENT_BIN):bbin/qemu-guest-kragent"; \
 	fi; \
 	if [ -r "$(SSH_HOST_KEY)" ]; then \
-	  FILES_ARGS="$$FILES_ARGS -files $(SSH_HOST_KEY):/id_rsa"; \
+	  FILES_ARGS="$$FILES_ARGS -files $(SSH_HOST_KEY):id_rsa"; \
 	fi; \
 	if [ -r "$(SSH_AUTH_KEYS)" ]; then \
-	  FILES_ARGS="$$FILES_ARGS -files $(SSH_AUTH_KEYS):/authorized_keys"; \
+	  FILES_ARGS="$$FILES_ARGS -files $(SSH_AUTH_KEYS):authorized_keys"; \
 	fi; \
 	GO111MODULE=on u-root -build=bb -format=cpio -o $(INITRAMFS) \
 	  -files "$(INITBIN):bbin/goos-init" \
