@@ -31,20 +31,43 @@ func main() {
 	mount("sysfs", "/sys", "sysfs", 0, "")
 	mount("devtmpfs", "/dev", "devtmpfs", 0, "mode=0755")
 
+	ensureAuthorizedKeys()
+	startGuestAgent()
+	startSSHD()
+
 	// Bring up loopback + first NIC.
 	_ = run("ip", "link", "set", "lo", "up")
 
 	iface := firstNonLoopbackIface()
 	if iface == "" {
-		// Try loading common NIC modules for QEMU before re-scanning.
-		tryLoadNetModules([]string{"e1000", "virtio_net", "rtl8139", "e1000e"})
-		iface = firstNonLoopbackIface()
-	}
-	if iface == "" {
 		kver := kernelRelease()
 		if kver != "" {
-			mod := fmt.Sprintf("/lib/modules/%s/kernel/drivers/net/ethernet/intel/e1000/e1000.ko", kver)
-			_ = run("insmod", mod)
+			failover := fmt.Sprintf("/lib/modules/%s/kernel/net/core/failover.ko", kver)
+			if _, err := os.Stat(failover); err == nil {
+				if err := run("insmod", failover); err != nil {
+					log("goos: insmod failover failed: " + err.Error())
+				}
+			}
+			netFailover := fmt.Sprintf("/lib/modules/%s/kernel/drivers/net/net_failover.ko", kver)
+			if _, err := os.Stat(netFailover); err == nil {
+				if err := run("insmod", netFailover); err != nil {
+					log("goos: insmod net_failover failed: " + err.Error())
+				}
+			}
+			virtio := fmt.Sprintf("/lib/modules/%s/kernel/drivers/net/virtio_net.ko", kver)
+			if _, err := os.Stat(virtio); err == nil {
+				if err := run("insmod", virtio); err != nil {
+					log("goos: insmod virtio_net failed: " + err.Error())
+				}
+			} else {
+				log("goos: virtio_net module not found")
+			}
+			e1000 := fmt.Sprintf("/lib/modules/%s/kernel/drivers/net/ethernet/intel/e1000/e1000.ko", kver)
+			if _, err := os.Stat(e1000); err == nil {
+				if err := run("insmod", e1000); err != nil {
+					log("goos: insmod e1000 failed: " + err.Error())
+				}
+			}
 		}
 		iface = firstNonLoopbackIface()
 	}
@@ -146,30 +169,31 @@ func kernelRelease() string {
 	return strings.TrimSpace(string(b))
 }
 
-func tryLoadNetModules(mods []string) {
-	if !hasModuleDeps() {
+func startGuestAgent() {
+	if _, err := exec.LookPath("qemu-guest-kragent"); err != nil {
 		return
 	}
-	if _, err := exec.LookPath("modprobe"); err != nil {
-		return
-	}
-	for _, m := range mods {
-		_ = run("modprobe", m)
-	}
+	cmd := exec.Command("qemu-guest-kragent")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	_ = cmd.Start()
 }
 
-func hasModuleDeps() bool {
-	kver := kernelRelease()
-	if kver == "" {
-		return false
+func startSSHD() {
+	if _, err := exec.LookPath("sshd"); err != nil {
+		return
 	}
-	for _, base := range []string{"/lib/modules", "/usr/lib/modules"} {
-		p := filepath.Join(base, kver, "modules.dep")
-		if _, err := os.Stat(p); err == nil {
-			return true
-		}
+	cmd := exec.Command("sshd", "-ip", "0.0.0.0", "-port", "2222", "-privatekey", "/id_rsa", "-keys", "/authorized_keys")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	_ = cmd.Start()
+}
+
+func ensureAuthorizedKeys() {
+	if _, err := os.Stat("/authorized_keys"); err == nil {
+		return
 	}
-	return false
+	_ = os.WriteFile("/authorized_keys", []byte{}, 0o600)
 }
 
 func log(s string) {
