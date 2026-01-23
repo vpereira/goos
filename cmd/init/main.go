@@ -82,7 +82,7 @@ func main() {
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
 
-			// u-root dhclient supports flags like -ipv4 / -ipv6=false (per u-root docs/examples). :contentReference[oaicite:1]{index=1}
+			// ipv4 only
 			_ = runCtx(ctx, "dhclient", "-ipv4", "-ipv6=false", iface)
 		} else {
 			log("goos: dhclient not found in PATH")
@@ -105,8 +105,6 @@ func main() {
 		log("goos: starting gosh (Ctrl+A X to exit QEMU -nographic)")
 		_ = syscall.Exec(mustLookPath("gosh"), []string{"gosh"}, os.Environ())
 	}
-
-	log("goos: gosh not found; idling")
 }
 
 func mount(source, target, fstype string, flags uintptr, data string) {
@@ -169,6 +167,9 @@ func kernelRelease() string {
 	return strings.TrimSpace(string(b))
 }
 
+// any other better qemu-guest-agent?
+// unfortunately u-root doesnt have one
+// ticket open https://github.com/u-root/u-root/issues/3489
 func startGuestAgent() {
 	if _, err := exec.LookPath("qemu-guest-kragent"); err != nil {
 		return
@@ -179,6 +180,7 @@ func startGuestAgent() {
 	_ = cmd.Start()
 }
 
+// TODO: pass keys and authorized keys as params
 func startSSHD() {
 	if _, err := exec.LookPath("sshd"); err != nil {
 		return
