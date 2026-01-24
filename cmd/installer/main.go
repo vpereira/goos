@@ -170,7 +170,7 @@ func main() {
 	fmt.Println("Installing…")
 	fmt.Println()
 	fmt.Println("* Partitioning disk…")
-	fmt.Println("* Formatting ext4…")
+	fmt.Println("* Formatting ext4… (skipped)")
 	fmt.Println("* Writing boot files…")
 	fmt.Println("* Writing configuration…")
 
@@ -367,32 +367,37 @@ type installerConfig struct {
 
 func installUEFI(cfg installerConfig) error {
 	diskPath := filepath.Join("/dev", cfg.Disk)
-	sizeBytes, err := diskSizeBytes(cfg.Disk)
-	if err != nil {
-		return fmt.Errorf("read disk size: %w", err)
-	}
-
-	disk, err := diskfs.Open(diskPath)
+	disk, err := diskfs.Open(
+		diskPath,
+		diskfs.WithOpenMode(diskfs.ReadWrite),
+	)
 	if err != nil {
 		return fmt.Errorf("open disk: %w", err)
 	}
+	defer disk.Backend.Close()
 
-	const sectorSize = 512
-	const espSize = 512 * 1024 * 1024
-	espSectors := uint64(espSize / sectorSize)
+	sectorSize := uint64(disk.LogicalBlocksize)
+	if sectorSize == 0 {
+		sectorSize = 512
+	}
+	physSize := int64(disk.PhysicalBlocksize)
+	if physSize == 0 {
+		physSize = int64(sectorSize)
+	}
 	start := uint64(2048)
+	totalSectors := uint64(disk.Size) / sectorSize
 	espStart := start
-	espEnd := espStart + espSectors - 1
-	totalSectors := sizeBytes / sectorSize
-	rootStart := espEnd + 1
-	rootEnd := totalSectors - 2048
-	if rootEnd <= rootStart {
+	espEnd := totalSectors - 2048
+	if espEnd <= espStart {
 		return fmt.Errorf("disk too small for EFI install")
 	}
+	fmt.Printf("DEBUG: disk size=%d bytes logical=%d physical=%d\n", disk.Size, sectorSize, physSize)
+	fmt.Printf("DEBUG: GPT esp start=%d end=%d total=%d\n", espStart, espEnd, totalSectors)
 
 	table := &gpt.Table{
 		LogicalSectorSize:  int(sectorSize),
-		PhysicalSectorSize: int(sectorSize),
+		PhysicalSectorSize: int(physSize),
+		ProtectiveMBR:      true,
 		Partitions: []*gpt.Partition{
 			{
 				Start: espStart,
@@ -400,16 +405,13 @@ func installUEFI(cfg installerConfig) error {
 				Type:  gpt.EFISystemPartition,
 				Name:  "EFI System",
 			},
-			{
-				Start: rootStart,
-				End:   rootEnd,
-				Type:  gpt.LinuxFilesystem,
-				Name:  "GOOS",
-			},
 		},
 	}
 	if err := disk.Partition(table); err != nil {
 		return fmt.Errorf("partition disk: %w", err)
+	}
+	if _, err := disk.GetPartitionTable(); err != nil {
+		return fmt.Errorf("verify GPT: %w", err)
 	}
 
 	espFS, err := disk.CreateFilesystem(diskpkg.FilesystemSpec{
@@ -424,36 +426,17 @@ func installUEFI(cfg installerConfig) error {
 	if err := copyBootFiles(espFS); err != nil {
 		return err
 	}
-	rootFS, err := disk.CreateFilesystem(diskpkg.FilesystemSpec{
-		Partition:   2,
-		FSType:      filesystem.TypeExt4,
-		VolumeLabel: "GOOS",
-	})
-	if err != nil {
-		fmt.Printf("WARN: format root partition failed: %v\n", err)
-		fmt.Println("WARN: writing config to EFI partition instead.")
-		if err := writeConfigToFS(espFS, cfg); err != nil {
-			return err
-		}
-		return nil
+	if err := writeConfigToFS(espFS, cfg); err != nil {
+		return err
 	}
-	if err := writeConfigToFS(rootFS, cfg); err != nil {
+	_ = espFS.Close()
+	syscall.Sync()
+
+	if err := verifyESP(diskPath); err != nil {
 		return err
 	}
 
 	return nil
-}
-
-func diskSizeBytes(disk string) (uint64, error) {
-	b, err := os.ReadFile(filepath.Join("/sys/block", disk, "size"))
-	if err != nil {
-		return 0, err
-	}
-	sec, err := strconv.ParseUint(strings.TrimSpace(string(b)), 10, 64)
-	if err != nil {
-		return 0, err
-	}
-	return sec * 512, nil
 }
 
 func copyBootFiles(esp filesystem.FileSystem) error {
@@ -506,19 +489,49 @@ func copyBootFiles(esp filesystem.FileSystem) error {
 	return nil
 }
 
+func verifyESP(diskPath string) error {
+	disk, err := diskfs.Open(
+		diskPath,
+		diskfs.WithOpenMode(diskfs.ReadOnly),
+	)
+	if err != nil {
+		return fmt.Errorf("verify ESP: open disk: %w", err)
+	}
+	defer disk.Backend.Close()
+	if _, err := disk.GetPartitionTable(); err != nil {
+		return fmt.Errorf("verify ESP: read partition table: %w", err)
+	}
+	fs, err := disk.GetFilesystem(1)
+	if err != nil {
+		return fmt.Errorf("verify ESP: read filesystem: %w", err)
+	}
+	f, err := fs.OpenFile("/EFI/BOOT/BOOTX64.EFI", os.O_RDONLY)
+	if err != nil {
+		return fmt.Errorf("verify ESP: missing BOOTX64.EFI: %w", err)
+	}
+	_ = f.Close()
+	return nil
+}
+
 func mountISO() error {
 	loadISOModules()
 	_ = os.MkdirAll("/mnt/iso", 0o755)
-	for _, dev := range []string{"/dev/sr0", "/dev/sr1", "/dev/cdrom", "/dev/dvd", "/dev/hdc"} {
-		if _, err := os.Stat(dev); err == nil {
-			if err := syscall.Mount(dev, "/mnt/iso", "iso9660", 0, ""); err == nil {
-				return nil
-			}
+	debugBlockDevices()
+	if isReadonlyBlock("vda") {
+		if err := tryMountISO("/dev/vda"); err == nil {
+			return nil
 		}
 	}
 	if dev, ok := findReadonlyBlock(); ok {
-		if err := syscall.Mount(dev, "/mnt/iso", "iso9660", 0, ""); err == nil {
+		if err := tryMountISO(dev); err == nil {
 			return nil
+		}
+	}
+	for _, dev := range []string{"/dev/sr0", "/dev/sr1", "/dev/cdrom", "/dev/dvd", "/dev/hdc"} {
+		if _, err := os.Stat(dev); err == nil {
+			if err := tryMountISO(dev); err == nil {
+				return nil
+			}
 		}
 	}
 	return fmt.Errorf("no ISO device found")
@@ -546,12 +559,60 @@ func findReadonlyBlock() (string, bool) {
 	return "", false
 }
 
+func isReadonlyBlock(name string) bool {
+	roPath := filepath.Join("/sys/block", name, "ro")
+	b, err := os.ReadFile(roPath)
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(b)) == "1"
+}
+
+func tryMountISO(dev string) error {
+	if err := syscall.Mount(dev, "/mnt/iso", "iso9660", syscall.MS_RDONLY, ""); err == nil {
+		return nil
+	} else {
+		fmt.Printf("DEBUG: mount iso9660 on %s failed: %v\n", dev, err)
+	}
+	if err := syscall.Mount(dev, "/mnt/iso", "udf", syscall.MS_RDONLY, ""); err == nil {
+		return nil
+	} else {
+		fmt.Printf("DEBUG: mount udf on %s failed: %v\n", dev, err)
+	}
+	return fmt.Errorf("mount failed")
+}
+
+func debugBlockDevices() {
+	entries, err := os.ReadDir("/sys/block")
+	if err != nil {
+		fmt.Println("WARN: cannot read /sys/block:", err)
+		return
+	}
+	for _, e := range entries {
+		name := e.Name()
+		roPath := filepath.Join("/sys/block", name, "ro")
+		roVal := "?"
+		if b, err := os.ReadFile(roPath); err == nil {
+			roVal = strings.TrimSpace(string(b))
+		}
+		devPath := filepath.Join("/dev", name)
+		if _, err := os.Stat(devPath); err == nil {
+			fmt.Printf("DEBUG: block %s ro=%s dev=%s\n", name, roVal, devPath)
+		} else {
+			fmt.Printf("DEBUG: block %s ro=%s dev=missing\n", name, roVal)
+		}
+	}
+}
+
 func loadISOModules() {
 	kver := kernelRelease()
 	if kver == "" {
 		return
 	}
 	for _, mod := range []string{
+		fmt.Sprintf("/lib/modules/%s/kernel/drivers/scsi/scsi_mod.ko", kver),
+		fmt.Sprintf("/lib/modules/%s/kernel/drivers/scsi/sd_mod.ko", kver),
+		fmt.Sprintf("/lib/modules/%s/kernel/drivers/scsi/virtio_scsi.ko", kver),
 		fmt.Sprintf("/lib/modules/%s/kernel/drivers/ata/ata_piix.ko", kver),
 		fmt.Sprintf("/lib/modules/%s/kernel/drivers/cdrom/cdrom.ko", kver),
 		fmt.Sprintf("/lib/modules/%s/kernel/drivers/scsi/sr_mod.ko", kver),

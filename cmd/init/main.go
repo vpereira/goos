@@ -39,7 +39,7 @@ func main() {
 		if err := cmd.Run(); err != nil {
 			log("goos: installer exited: " + err.Error())
 		}
-		return
+		log("goos: installer finished; starting shell")
 	}
 
 	ensureAuthorizedKeys()

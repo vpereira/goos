@@ -29,6 +29,12 @@ SR_MOD_ZST := /usr/lib/modules/$(KVER)/kernel/drivers/scsi/sr_mod.ko.zst
 SR_MOD_KO  := $(BUILD)/sr_mod.ko
 ISOFS_ZST := /usr/lib/modules/$(KVER)/kernel/fs/isofs/isofs.ko.zst
 ISOFS_KO  := $(BUILD)/isofs.ko
+SCSI_MOD_ZST := /usr/lib/modules/$(KVER)/kernel/drivers/scsi/scsi_mod.ko.zst
+SCSI_MOD_KO  := $(BUILD)/scsi_mod.ko
+SD_MOD_ZST := /usr/lib/modules/$(KVER)/kernel/drivers/scsi/sd_mod.ko.zst
+SD_MOD_KO  := $(BUILD)/sd_mod.ko
+VIRTIO_SCSI_ZST := /usr/lib/modules/$(KVER)/kernel/drivers/scsi/virtio_scsi.ko.zst
+VIRTIO_SCSI_KO  := $(BUILD)/virtio_scsi.ko
 GOPATH    := $(shell go env GOPATH)
 KRAGENT_PKG := github.com/bradfitz/qemu-guest-kragent
 KRAGENT_BIN := $(BUILD)/qemu-guest-kragent
@@ -215,6 +221,24 @@ initramfs: init Makefile | $(BUILD)
 	  FILES_ARGS="$$FILES_ARGS -files $(ISOFS_KO):lib/modules/$(KVER)/kernel/fs/isofs/isofs.ko"; \
 	else \
 	  echo "WARN: isofs module not found or zstd missing; skipping isofs.ko"; \
+	fi; \
+	if command -v zstd >/dev/null 2>&1 && [ -r "$(SCSI_MOD_ZST)" ]; then \
+	  zstd -d -c "$(SCSI_MOD_ZST)" > "$(SCSI_MOD_KO)"; \
+	  FILES_ARGS="$$FILES_ARGS -files $(SCSI_MOD_KO):lib/modules/$(KVER)/kernel/drivers/scsi/scsi_mod.ko"; \
+	else \
+	  echo "WARN: scsi_mod module not found or zstd missing; skipping scsi_mod.ko"; \
+	fi; \
+	if command -v zstd >/dev/null 2>&1 && [ -r "$(SD_MOD_ZST)" ]; then \
+	  zstd -d -c "$(SD_MOD_ZST)" > "$(SD_MOD_KO)"; \
+	  FILES_ARGS="$$FILES_ARGS -files $(SD_MOD_KO):lib/modules/$(KVER)/kernel/drivers/scsi/sd_mod.ko"; \
+	else \
+	  echo "WARN: sd_mod module not found or zstd missing; skipping sd_mod.ko"; \
+	fi; \
+	if command -v zstd >/dev/null 2>&1 && [ -r "$(VIRTIO_SCSI_ZST)" ]; then \
+	  zstd -d -c "$(VIRTIO_SCSI_ZST)" > "$(VIRTIO_SCSI_KO)"; \
+	  FILES_ARGS="$$FILES_ARGS -files $(VIRTIO_SCSI_KO):lib/modules/$(KVER)/kernel/drivers/scsi/virtio_scsi.ko"; \
+	else \
+	  echo "WARN: virtio_scsi module not found or zstd missing; skipping virtio_scsi.ko"; \
 	fi; \
 	if [ ! -r "$(EFI_BOOT_BIN)" ] && command -v docker >/dev/null 2>&1; then \
 	  $(MAKE) efi-bootloader; \
