@@ -31,6 +31,17 @@ func main() {
 	mount("sysfs", "/sys", "sysfs", 0, "")
 	mount("devtmpfs", "/dev", "devtmpfs", 0, "mode=0755")
 
+	if bootInstaller() {
+		cmd := exec.Command("goos-installer")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Stdin = os.Stdin
+		if err := cmd.Run(); err != nil {
+			log("goos: installer exited: " + err.Error())
+		}
+		return
+	}
+
 	ensureAuthorizedKeys()
 	startGuestAgent()
 	startSSHD()
@@ -165,6 +176,14 @@ func kernelRelease() string {
 		return ""
 	}
 	return strings.TrimSpace(string(b))
+}
+
+func bootInstaller() bool {
+	b, err := os.ReadFile("/proc/cmdline")
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(b), "goos.installer=1")
 }
 
 // any other better qemu-guest-agent?
