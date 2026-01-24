@@ -49,7 +49,7 @@ UROOT_CMDS := \
   github.com/u-root/u-root/cmds/core/sshd \
   github.com/u-root/u-root/cmds/core/ps
 
-.PHONY: all init kernel kernel-arch initramfs initramfs-arch iso qemu clean
+.PHONY: all init kernel kernel-arch kernel-docker initramfs initramfs-arch iso qemu qemu-mac clean
 
 all: qemu
 
@@ -112,6 +112,21 @@ kernel-arch: | $(BUILD)
 	echo "Using kernel: $$K"; \
 	sudo cp -L "$$K" $(VMLINUX)
 
+# macOS/Docker: extract x86_64 kernel from Ubuntu Docker image
+kernel-docker: | $(BUILD)
+	@set -e; \
+	if [ -r "$(VMLINUX)" ]; then \
+	  echo "Using existing kernel: $(VMLINUX)"; \
+	  exit 0; \
+	fi; \
+	echo "Extracting x86_64 kernel from Ubuntu..."; \
+	docker rm -f goos-kernel-tmp 2>/dev/null || true; \
+	docker run --platform linux/amd64 --name goos-kernel-tmp ubuntu:24.04 sh -c \
+	  "apt-get update && apt-get install -y --no-install-recommends linux-image-generic >/dev/null 2>&1 && cp /boot/vmlinuz-* /vmlinuz"; \
+	docker cp goos-kernel-tmp:/vmlinuz $(VMLINUX); \
+	docker rm goos-kernel-tmp >/dev/null; \
+	echo "Kernel extracted to $(VMLINUX)"
+
 
 # Build initramfs (u-root + our uinit). We force module mode so u-root uses your repo's go.mod/go.sum.
 initramfs: init Makefile | $(BUILD)
@@ -152,14 +167,12 @@ initramfs: init Makefile | $(BUILD)
 	else \
 	  echo "WARN: net_failover module not found or zstd missing; skipping net_failover.ko"; \
 	fi; \
-	if [ -x "$(GOPATH)/bin/qemu-guest-kragent" ]; then \
-	  cp -f "$(GOPATH)/bin/qemu-guest-kragent" "$(KRAGENT_BIN)"; \
+	if [ -x "$(KRAGENT_BIN)" ]; then \
+	  : ; \
+	elif GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o "$(KRAGENT_BIN)" $(KRAGENT_PKG)@latest 2>/dev/null; then \
+	  : ; \
 	else \
-	  if go install $(KRAGENT_PKG)@latest; then \
-	    cp -f "$(GOPATH)/bin/qemu-guest-kragent" "$(KRAGENT_BIN)"; \
-	  else \
-	    echo "WARN: failed to build qemu-guest-kragent; skipping"; \
-	  fi; \
+	  echo "WARN: failed to build qemu-guest-kragent; skipping"; \
 	fi; \
 	if [ -x "$(KRAGENT_BIN)" ]; then \
 	  FILES_ARGS="$$FILES_ARGS -files $(KRAGENT_BIN):bbin/qemu-guest-kragent"; \
@@ -170,7 +183,7 @@ initramfs: init Makefile | $(BUILD)
 	if [ -r "$(SSH_AUTH_KEYS)" ]; then \
 	  FILES_ARGS="$$FILES_ARGS -files $(SSH_AUTH_KEYS):authorized_keys"; \
 	fi; \
-	GO111MODULE=on u-root -build=bb -format=cpio -o $(INITRAMFS) \
+	GOOS=linux GOARCH=amd64 GO111MODULE=on u-root -build=bb -format=cpio -o $(INITRAMFS) \
 	  -files "$(INITBIN):bbin/goos-init" \
 	  $$FILES_ARGS \
 	  -uinitcmd="/bbin/goos-init" \
@@ -205,6 +218,16 @@ qemu: kernel-arch initramfs
 	  -device virtserialport,chardev=qga0,name=org.qemu.guest_agent.0 \
 	  -kernel $(VMLINUX) \
 	  -initrd $$INITRD \
+	  -append "console=ttyS0 goos.shell=1"
+
+# macOS: boot with Docker-sourced kernel and TCG acceleration
+qemu-mac: kernel-docker initramfs
+	gzip -kf $(INITRAMFS)
+	qemu-system-x86_64 -m 1024 -nographic -accel tcg \
+	  -device virtio-rng-pci \
+	  -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
+	  -kernel $(VMLINUX) \
+	  -initrd $(INITRAMFS).gz \
 	  -append "console=ttyS0 goos.shell=1"
 
 clean:
