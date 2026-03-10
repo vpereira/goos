@@ -80,6 +80,7 @@ UROOT_CMDS := \
   github.com/u-root/u-root/cmds/core/ip \
   github.com/u-root/u-root/cmds/core/dhclient \
   github.com/u-root/u-root/cmds/core/find \
+  github.com/u-root/u-root/cmds/core/kill \
   github.com/u-root/u-root/cmds/core/ls \
   github.com/u-root/u-root/cmds/core/cat \
   github.com/u-root/u-root/cmds/core/true \
