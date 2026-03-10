@@ -79,6 +79,7 @@ UROOT_CMDS := \
   github.com/u-root/u-root/cmds/core/gosh \
   github.com/u-root/u-root/cmds/core/ip \
   github.com/u-root/u-root/cmds/core/dhclient \
+  github.com/u-root/u-root/cmds/core/find \
   github.com/u-root/u-root/cmds/core/ls \
   github.com/u-root/u-root/cmds/core/cat \
   github.com/u-root/u-root/cmds/core/true \
@@ -89,6 +90,8 @@ UROOT_CMDS := \
   github.com/u-root/u-root/cmds/core/hostname \
   github.com/u-root/u-root/cmds/core/id \
   github.com/u-root/u-root/cmds/core/sshd \
+  github.com/u-root/u-root/cmds/core/poweroff \
+  github.com/u-root/u-root/cmds/core/shutdown \
   github.com/u-root/u-root/cmds/core/ps \
   github.com/u-root/u-root/cmds/core/uname \
   github.com/u-root/u-root/cmds/core/uptime
@@ -440,5 +443,5 @@ kragent-docker: | $(BUILD)
 	  echo "ERROR: docker not found; cannot build qemu-guest-kragent"; \
 	  exit 1; \
 	fi; \
-	docker run --rm -v $(abspath $(BUILD)):/out -w /src golang:1.22 sh -c '\
-	  GOBIN=/out go install $(KRAGENT_PKG)@latest'
+	docker run --platform linux/amd64 --rm -v $(abspath $(BUILD)):/out -w /src golang:1.22 sh -c '\
+	  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOBIN=/out go install $(KRAGENT_PKG)@latest'
