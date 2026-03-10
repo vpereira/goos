@@ -71,7 +71,7 @@ EFI_BOOT_BIN := $(BUILD)/systemd-bootx64.efi
 ISO        := $(BUILD)/goos.iso
 
 # Pin u-root for deterministic builds
-UROOT_VER  := v0.15.0
+UROOT_VER  := v0.16.0
 
 # u-root command packages to include in the initramfs.
 UROOT_CMDS := \
@@ -89,7 +89,9 @@ UROOT_CMDS := \
   github.com/u-root/u-root/cmds/core/hostname \
   github.com/u-root/u-root/cmds/core/id \
   github.com/u-root/u-root/cmds/core/sshd \
-  github.com/u-root/u-root/cmds/core/ps
+  github.com/u-root/u-root/cmds/core/ps \
+  github.com/u-root/u-root/cmds/core/uname \
+  github.com/u-root/u-root/cmds/core/uptime
 
 ifeq ($(HOST_OS),Darwin)
 INITRAMFS_DEPS := init Makefile kernel-docker
