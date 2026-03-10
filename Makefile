@@ -13,6 +13,8 @@ INITRAMFS  := $(BUILD)/initramfs.cpio
 INITRAMFS_ARCH := $(BUILD)/initramfs-arch.img
 INITRAMFS_MERGED := $(BUILD)/initramfs-merged.cpio
 KVER       ?= $(shell uname -r)
+MODROOT    := $(BUILD)/modules
+LINUX_KVER ?= $(shell if [ -d "$(MODROOT)" ]; then ls -1 "$(MODROOT)" | head -n 1; else uname -r; fi)
 E1000_ZST  := /usr/lib/modules/$(KVER)/kernel/drivers/net/ethernet/intel/e1000/e1000.ko.zst
 E1000_KO   := $(BUILD)/e1000.ko
 VIRTIO_NET_ZST := /usr/lib/modules/$(KVER)/kernel/drivers/net/virtio_net.ko.zst
@@ -35,6 +37,17 @@ SD_MOD_ZST := /usr/lib/modules/$(KVER)/kernel/drivers/scsi/sd_mod.ko.zst
 SD_MOD_KO  := $(BUILD)/sd_mod.ko
 VIRTIO_SCSI_ZST := /usr/lib/modules/$(KVER)/kernel/drivers/scsi/virtio_scsi.ko.zst
 VIRTIO_SCSI_KO  := $(BUILD)/virtio_scsi.ko
+E1000_KO_DOCKER := $(MODROOT)/$(LINUX_KVER)/kernel/drivers/net/ethernet/intel/e1000/e1000.ko
+VIRTIO_NET_KO_DOCKER := $(MODROOT)/$(LINUX_KVER)/kernel/drivers/net/virtio_net.ko
+NET_FAILOVER_KO_DOCKER := $(MODROOT)/$(LINUX_KVER)/kernel/drivers/net/net_failover.ko
+FAILOVER_KO_DOCKER := $(MODROOT)/$(LINUX_KVER)/kernel/net/core/failover.ko
+ATA_PIIX_KO_DOCKER := $(MODROOT)/$(LINUX_KVER)/kernel/drivers/ata/ata_piix.ko
+CDROM_KO_DOCKER := $(MODROOT)/$(LINUX_KVER)/kernel/drivers/cdrom/cdrom.ko
+SR_MOD_KO_DOCKER := $(MODROOT)/$(LINUX_KVER)/kernel/drivers/scsi/sr_mod.ko
+ISOFS_KO_DOCKER := $(MODROOT)/$(LINUX_KVER)/kernel/fs/isofs/isofs.ko
+SCSI_MOD_KO_DOCKER := $(MODROOT)/$(LINUX_KVER)/kernel/drivers/scsi/scsi_mod.ko
+SD_MOD_KO_DOCKER := $(MODROOT)/$(LINUX_KVER)/kernel/drivers/scsi/sd_mod.ko
+VIRTIO_SCSI_KO_DOCKER := $(MODROOT)/$(LINUX_KVER)/kernel/drivers/scsi/virtio_scsi.ko
 GOPATH    := $(shell go env GOPATH)
 KRAGENT_PKG := github.com/bradfitz/qemu-guest-kragent
 KRAGENT_BIN := $(BUILD)/qemu-guest-kragent
@@ -66,7 +79,7 @@ UROOT_CMDS := \
   github.com/u-root/u-root/cmds/core/sshd \
   github.com/u-root/u-root/cmds/core/ps
 
-.PHONY: all init kernel kernel-arch kernel-docker efi-bootloader kragent-docker initramfs initramfs-arch iso qemu qemu-mac clean
+.PHONY: all init kernel kernel-arch kernel-docker efi-bootloader kragent-docker initramfs initramfs-arch iso qemu qemu-mac qemu-mac-bridge clean
 
 all: qemu
 
@@ -136,11 +149,10 @@ efi-bootloader: | $(BUILD)
 	  echo "ERROR: docker not found; cannot fetch systemd-bootx64.efi"; \
 	  exit 1; \
 	fi; \
-	docker run --rm -v $(abspath $(BUILD)):/out archlinux:latest sh -c '\
+	docker run --platform linux/amd64 --rm -v $(abspath $(BUILD)):/out ubuntu:24.04 sh -c '\
 	  set -e; \
-	  pacman-key --init >/dev/null 2>&1; \
-	  pacman-key --populate archlinux >/dev/null 2>&1; \
-	  pacman -Sy --noconfirm systemd >/dev/null 2>&1; \
+	  apt-get update >/dev/null 2>&1; \
+	  apt-get install -y --no-install-recommends systemd-boot-efi >/dev/null 2>&1; \
 	  cp /usr/lib/systemd/boot/efi/systemd-bootx64.efi /out/systemd-bootx64.efi'
 
 # macOS/Docker: extract x86_64 kernel from Ubuntu Docker image
@@ -155,6 +167,8 @@ kernel-docker: | $(BUILD)
 	docker run --platform linux/amd64 --name goos-kernel-tmp ubuntu:24.04 sh -c \
 	  "apt-get update && apt-get install -y --no-install-recommends linux-image-generic >/dev/null 2>&1 && cp /boot/vmlinuz-* /vmlinuz"; \
 	docker cp goos-kernel-tmp:/vmlinuz $(VMLINUX); \
+	mkdir -p $(MODROOT); \
+	docker cp goos-kernel-tmp:/lib/modules/. $(MODROOT); \
 	docker rm goos-kernel-tmp >/dev/null; \
 	echo "Kernel extracted to $(VMLINUX)"
 
@@ -177,66 +191,88 @@ initramfs: init Makefile | $(BUILD)
 	if command -v zstd >/dev/null 2>&1 && [ -r "$(E1000_ZST)" ]; then \
 	  zstd -d -c "$(E1000_ZST)" > "$(E1000_KO)"; \
 	  FILES_ARGS="-files $(E1000_KO):lib/modules/$(KVER)/kernel/drivers/net/ethernet/intel/e1000/e1000.ko"; \
+	elif [ -r "$(E1000_KO_DOCKER)" ]; then \
+	  FILES_ARGS="-files $(E1000_KO_DOCKER):lib/modules/$(LINUX_KVER)/kernel/drivers/net/ethernet/intel/e1000/e1000.ko"; \
 	else \
 	  echo "WARN: e1000 module not found or zstd missing; skipping e1000.ko"; \
 	fi; \
 	if command -v zstd >/dev/null 2>&1 && [ -r "$(FAILOVER_ZST)" ]; then \
 	  zstd -d -c "$(FAILOVER_ZST)" > "$(FAILOVER_KO)"; \
 	  FILES_ARGS="$$FILES_ARGS -files $(FAILOVER_KO):lib/modules/$(KVER)/kernel/net/core/failover.ko"; \
+	elif [ -r "$(FAILOVER_KO_DOCKER)" ]; then \
+	  FILES_ARGS="$$FILES_ARGS -files $(FAILOVER_KO_DOCKER):lib/modules/$(LINUX_KVER)/kernel/net/core/failover.ko"; \
 	else \
 	  echo "WARN: failover module not found or zstd missing; skipping failover.ko"; \
 	fi; \
 	if command -v zstd >/dev/null 2>&1 && [ -r "$(VIRTIO_NET_ZST)" ]; then \
 	  zstd -d -c "$(VIRTIO_NET_ZST)" > "$(VIRTIO_NET_KO)"; \
 	  FILES_ARGS="$$FILES_ARGS -files $(VIRTIO_NET_KO):lib/modules/$(KVER)/kernel/drivers/net/virtio_net.ko"; \
+	elif [ -r "$(VIRTIO_NET_KO_DOCKER)" ]; then \
+	  FILES_ARGS="$$FILES_ARGS -files $(VIRTIO_NET_KO_DOCKER):lib/modules/$(LINUX_KVER)/kernel/drivers/net/virtio_net.ko"; \
 	else \
 	  echo "WARN: virtio_net module not found or zstd missing; skipping virtio_net.ko"; \
 	fi; \
 	if command -v zstd >/dev/null 2>&1 && [ -r "$(NET_FAILOVER_ZST)" ]; then \
 	  zstd -d -c "$(NET_FAILOVER_ZST)" > "$(NET_FAILOVER_KO)"; \
 	  FILES_ARGS="$$FILES_ARGS -files $(NET_FAILOVER_KO):lib/modules/$(KVER)/kernel/drivers/net/net_failover.ko"; \
+	elif [ -r "$(NET_FAILOVER_KO_DOCKER)" ]; then \
+	  FILES_ARGS="$$FILES_ARGS -files $(NET_FAILOVER_KO_DOCKER):lib/modules/$(LINUX_KVER)/kernel/drivers/net/net_failover.ko"; \
 	else \
 	  echo "WARN: net_failover module not found or zstd missing; skipping net_failover.ko"; \
 	fi; \
 	if command -v zstd >/dev/null 2>&1 && [ -r "$(ATA_PIIX_ZST)" ]; then \
 	  zstd -d -c "$(ATA_PIIX_ZST)" > "$(ATA_PIIX_KO)"; \
 	  FILES_ARGS="$$FILES_ARGS -files $(ATA_PIIX_KO):lib/modules/$(KVER)/kernel/drivers/ata/ata_piix.ko"; \
+	elif [ -r "$(ATA_PIIX_KO_DOCKER)" ]; then \
+	  FILES_ARGS="$$FILES_ARGS -files $(ATA_PIIX_KO_DOCKER):lib/modules/$(LINUX_KVER)/kernel/drivers/ata/ata_piix.ko"; \
 	else \
 	  echo "WARN: ata_piix module not found or zstd missing; skipping ata_piix.ko"; \
 	fi; \
 	if command -v zstd >/dev/null 2>&1 && [ -r "$(CDROM_ZST)" ]; then \
 	  zstd -d -c "$(CDROM_ZST)" > "$(CDROM_KO)"; \
 	  FILES_ARGS="$$FILES_ARGS -files $(CDROM_KO):lib/modules/$(KVER)/kernel/drivers/cdrom/cdrom.ko"; \
+	elif [ -r "$(CDROM_KO_DOCKER)" ]; then \
+	  FILES_ARGS="$$FILES_ARGS -files $(CDROM_KO_DOCKER):lib/modules/$(LINUX_KVER)/kernel/drivers/cdrom/cdrom.ko"; \
 	else \
 	  echo "WARN: cdrom module not found or zstd missing; skipping cdrom.ko"; \
 	fi; \
 	if command -v zstd >/dev/null 2>&1 && [ -r "$(SR_MOD_ZST)" ]; then \
 	  zstd -d -c "$(SR_MOD_ZST)" > "$(SR_MOD_KO)"; \
 	  FILES_ARGS="$$FILES_ARGS -files $(SR_MOD_KO):lib/modules/$(KVER)/kernel/drivers/scsi/sr_mod.ko"; \
+	elif [ -r "$(SR_MOD_KO_DOCKER)" ]; then \
+	  FILES_ARGS="$$FILES_ARGS -files $(SR_MOD_KO_DOCKER):lib/modules/$(LINUX_KVER)/kernel/drivers/scsi/sr_mod.ko"; \
 	else \
 	  echo "WARN: sr_mod module not found or zstd missing; skipping sr_mod.ko"; \
 	fi; \
 	if command -v zstd >/dev/null 2>&1 && [ -r "$(ISOFS_ZST)" ]; then \
 	  zstd -d -c "$(ISOFS_ZST)" > "$(ISOFS_KO)"; \
 	  FILES_ARGS="$$FILES_ARGS -files $(ISOFS_KO):lib/modules/$(KVER)/kernel/fs/isofs/isofs.ko"; \
+	elif [ -r "$(ISOFS_KO_DOCKER)" ]; then \
+	  FILES_ARGS="$$FILES_ARGS -files $(ISOFS_KO_DOCKER):lib/modules/$(LINUX_KVER)/kernel/fs/isofs/isofs.ko"; \
 	else \
 	  echo "WARN: isofs module not found or zstd missing; skipping isofs.ko"; \
 	fi; \
 	if command -v zstd >/dev/null 2>&1 && [ -r "$(SCSI_MOD_ZST)" ]; then \
 	  zstd -d -c "$(SCSI_MOD_ZST)" > "$(SCSI_MOD_KO)"; \
 	  FILES_ARGS="$$FILES_ARGS -files $(SCSI_MOD_KO):lib/modules/$(KVER)/kernel/drivers/scsi/scsi_mod.ko"; \
+	elif [ -r "$(SCSI_MOD_KO_DOCKER)" ]; then \
+	  FILES_ARGS="$$FILES_ARGS -files $(SCSI_MOD_KO_DOCKER):lib/modules/$(LINUX_KVER)/kernel/drivers/scsi/scsi_mod.ko"; \
 	else \
 	  echo "WARN: scsi_mod module not found or zstd missing; skipping scsi_mod.ko"; \
 	fi; \
 	if command -v zstd >/dev/null 2>&1 && [ -r "$(SD_MOD_ZST)" ]; then \
 	  zstd -d -c "$(SD_MOD_ZST)" > "$(SD_MOD_KO)"; \
 	  FILES_ARGS="$$FILES_ARGS -files $(SD_MOD_KO):lib/modules/$(KVER)/kernel/drivers/scsi/sd_mod.ko"; \
+	elif [ -r "$(SD_MOD_KO_DOCKER)" ]; then \
+	  FILES_ARGS="$$FILES_ARGS -files $(SD_MOD_KO_DOCKER):lib/modules/$(LINUX_KVER)/kernel/drivers/scsi/sd_mod.ko"; \
 	else \
 	  echo "WARN: sd_mod module not found or zstd missing; skipping sd_mod.ko"; \
 	fi; \
 	if command -v zstd >/dev/null 2>&1 && [ -r "$(VIRTIO_SCSI_ZST)" ]; then \
 	  zstd -d -c "$(VIRTIO_SCSI_ZST)" > "$(VIRTIO_SCSI_KO)"; \
 	  FILES_ARGS="$$FILES_ARGS -files $(VIRTIO_SCSI_KO):lib/modules/$(KVER)/kernel/drivers/scsi/virtio_scsi.ko"; \
+	elif [ -r "$(VIRTIO_SCSI_KO_DOCKER)" ]; then \
+	  FILES_ARGS="$$FILES_ARGS -files $(VIRTIO_SCSI_KO_DOCKER):lib/modules/$(LINUX_KVER)/kernel/drivers/scsi/virtio_scsi.ko"; \
 	else \
 	  echo "WARN: virtio_scsi module not found or zstd missing; skipping virtio_scsi.ko"; \
 	fi; \
@@ -311,6 +347,22 @@ qemu-mac: kernel-docker initramfs
 	qemu-system-x86_64 -m 1024 -nographic -accel tcg \
 	  -device virtio-rng-pci \
 	  -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
+	  -kernel $(VMLINUX) \
+	  -initrd $(INITRAMFS).gz \
+	  -append "console=ttyS0 goos.shell=1"
+
+# macOS: bridged networking via socket_vmnet
+qemu-mac-bridge: kernel-docker initramfs
+	@if [ ! -x "/opt/homebrew/opt/socket_vmnet/bin/socket_vmnet_client" ]; then \
+	  echo "ERROR: socket_vmnet_client not found at /opt/homebrew/opt/socket_vmnet/bin/socket_vmnet_client"; \
+	  exit 1; \
+	fi; \
+	gzip -kf $(INITRAMFS); \
+	sudo /opt/homebrew/opt/socket_vmnet/bin/socket_vmnet_client \
+	  /var/run/socket_vmnet \
+	  qemu-system-x86_64 -m 1024 -nographic -accel tcg \
+	  -device virtio-net-pci,netdev=net0 \
+	  -netdev socket,id=net0,fd=3 \
 	  -kernel $(VMLINUX) \
 	  -initrd $(INITRAMFS).gz \
 	  -append "console=ttyS0 goos.shell=1"
