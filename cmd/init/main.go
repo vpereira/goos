@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -11,6 +12,15 @@ import (
 	"syscall"
 	"time"
 )
+
+type installConfig struct {
+	Network    string
+	StaticIPv4 string
+	StaticGW   string
+	StaticDNS  string
+	SSHEnabled bool
+	SSHKey     string
+}
 
 func main() {
 	// PID 1 should never exit.
@@ -42,9 +52,12 @@ func main() {
 		log("goos: installer finished; starting shell")
 	}
 
-	ensureAuthorizedKeys()
+	cfg := loadInstallConfig()
+	ensureAuthorizedKeys(cfg)
 	startGuestAgent()
-	startSSHD()
+	if cfg.SSHEnabled {
+		startSSHD()
+	}
 
 	// Bring up loopback + first NIC.
 	_ = run("ip", "link", "set", "lo", "up")
@@ -86,18 +99,7 @@ func main() {
 		log("goos: no non-loopback interface found")
 	} else {
 		_ = run("ip", "link", "set", iface, "up")
-
-		// Try DHCP via u-root dhclient if present.
-		if _, err := exec.LookPath("dhclient"); err == nil {
-			log("goos: attempting DHCP on " + iface)
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-			defer cancel()
-
-			// ipv4 only
-			_ = runCtx(ctx, "dhclient", "-ipv4", "-ipv6=false", iface)
-		} else {
-			log("goos: dhclient not found in PATH")
-		}
+		configureNetwork(iface, cfg)
 
 		// Show addresses for debugging.
 		_ = run("ip", "addr", "show", iface)
@@ -186,6 +188,97 @@ func bootInstaller() bool {
 	return strings.Contains(string(b), "goos.installer=1")
 }
 
+func loadInstallConfig() installConfig {
+	cfg := installConfig{
+		Network:    "dhcp",
+		SSHEnabled: true,
+	}
+	f, err := os.Open("/etc/goos-installer.conf")
+	if err != nil {
+		return cfg
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		switch strings.TrimSpace(k) {
+		case "network":
+			cfg.Network = strings.TrimSpace(v)
+		case "static_ipv4":
+			cfg.StaticIPv4 = strings.TrimSpace(v)
+		case "static_gw":
+			cfg.StaticGW = strings.TrimSpace(v)
+		case "static_dns":
+			cfg.StaticDNS = strings.TrimSpace(v)
+		case "ssh_enabled":
+			cfg.SSHEnabled = strings.EqualFold(strings.TrimSpace(v), "true")
+		case "ssh_key":
+			cfg.SSHKey = strings.TrimSpace(v)
+		}
+	}
+	return cfg
+}
+
+func configureNetwork(iface string, cfg installConfig) {
+	if cfg.Network == "static" && cfg.StaticIPv4 != "" {
+		log("goos: configuring static network on " + iface)
+		if err := run("ip", "addr", "add", cfg.StaticIPv4, "dev", iface); err != nil {
+			log("goos: static ip failed: " + err.Error())
+		}
+		if cfg.StaticGW != "" {
+			if err := run("ip", "route", "replace", "default", "via", cfg.StaticGW); err != nil {
+				log("goos: default route failed: " + err.Error())
+			}
+		}
+		writeResolvConf(cfg.StaticDNS)
+		return
+	}
+
+	// Try DHCP via u-root dhclient if present.
+	if _, err := exec.LookPath("dhclient"); err == nil {
+		log("goos: attempting DHCP on " + iface)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+
+		// ipv4 only
+		if err := runCtx(ctx, "dhclient", "-ipv4", "-ipv6=false", iface); err != nil {
+			log("goos: dhcp failed: " + err.Error())
+		}
+	} else {
+		log("goos: dhclient not found in PATH")
+	}
+}
+
+func writeResolvConf(csv string) {
+	if strings.TrimSpace(csv) == "" {
+		return
+	}
+	var b strings.Builder
+	for _, ns := range strings.Split(csv, ",") {
+		ns = strings.TrimSpace(ns)
+		if ns == "" {
+			continue
+		}
+		b.WriteString("nameserver ")
+		b.WriteString(ns)
+		b.WriteString("\n")
+	}
+	if b.Len() == 0 {
+		return
+	}
+	if err := os.WriteFile("/etc/resolv.conf", []byte(b.String()), 0o644); err != nil {
+		log("goos: writing resolv.conf failed: " + err.Error())
+	}
+}
+
 // any other better qemu-guest-agent?
 // unfortunately u-root doesnt have one
 // ticket open https://github.com/u-root/u-root/issues/3489
@@ -210,7 +303,11 @@ func startSSHD() {
 	_ = cmd.Start()
 }
 
-func ensureAuthorizedKeys() {
+func ensureAuthorizedKeys(cfg installConfig) {
+	if cfg.SSHKey != "" {
+		_ = os.WriteFile("/authorized_keys", []byte(cfg.SSHKey+"\n"), 0o600)
+		return
+	}
 	if _, err := os.Stat("/authorized_keys"); err == nil {
 		return
 	}
