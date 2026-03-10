@@ -21,6 +21,23 @@ Boot kernel+initramfs directly:
 make qemu
 ```
 
+## macOS
+
+macOS uses Docker for the kernel and socket_vmnet for bridged networking.
+
+Start socket_vmnet (bridged to your host NIC):
+```
+sudo /opt/homebrew/opt/socket_vmnet/bin/socket_vmnet \
+  --vmnet-mode=bridged \
+  --vmnet-interface=$IFACE \
+  /var/run/socket_vmnet
+```
+
+Run QEMU via socket_vmnet:
+```
+make qemu-mac-bridge
+```
+
 ## Create a disk (recreate after rebuild)
 
 Create a fresh disk before installing:
