@@ -12,9 +12,10 @@ INSTALLBIN := $(BUILD)/goos-installer
 INITRAMFS  := $(BUILD)/initramfs.cpio
 INITRAMFS_ARCH := $(BUILD)/initramfs-arch.img
 INITRAMFS_MERGED := $(BUILD)/initramfs-merged.cpio
+HOST_OS    := $(shell uname -s)
 KVER       ?= $(shell uname -r)
 MODROOT    := $(BUILD)/modules
-LINUX_KVER ?= $(shell if [ -d "$(MODROOT)" ]; then ls -1 "$(MODROOT)" | head -n 1; else uname -r; fi)
+LINUX_KVER = $(shell if [ -d "$(MODROOT)" ]; then ls -1 "$(MODROOT)" | head -n 1; else uname -r; fi)
 E1000_ZST  := /usr/lib/modules/$(KVER)/kernel/drivers/net/ethernet/intel/e1000/e1000.ko.zst
 E1000_KO   := $(BUILD)/e1000.ko
 VIRTIO_NET_ZST := /usr/lib/modules/$(KVER)/kernel/drivers/net/virtio_net.ko.zst
@@ -37,17 +38,28 @@ SD_MOD_ZST := /usr/lib/modules/$(KVER)/kernel/drivers/scsi/sd_mod.ko.zst
 SD_MOD_KO  := $(BUILD)/sd_mod.ko
 VIRTIO_SCSI_ZST := /usr/lib/modules/$(KVER)/kernel/drivers/scsi/virtio_scsi.ko.zst
 VIRTIO_SCSI_KO  := $(BUILD)/virtio_scsi.ko
-E1000_KO_DOCKER := $(MODROOT)/$(LINUX_KVER)/kernel/drivers/net/ethernet/intel/e1000/e1000.ko
-VIRTIO_NET_KO_DOCKER := $(MODROOT)/$(LINUX_KVER)/kernel/drivers/net/virtio_net.ko
-NET_FAILOVER_KO_DOCKER := $(MODROOT)/$(LINUX_KVER)/kernel/drivers/net/net_failover.ko
-FAILOVER_KO_DOCKER := $(MODROOT)/$(LINUX_KVER)/kernel/net/core/failover.ko
-ATA_PIIX_KO_DOCKER := $(MODROOT)/$(LINUX_KVER)/kernel/drivers/ata/ata_piix.ko
-CDROM_KO_DOCKER := $(MODROOT)/$(LINUX_KVER)/kernel/drivers/cdrom/cdrom.ko
-SR_MOD_KO_DOCKER := $(MODROOT)/$(LINUX_KVER)/kernel/drivers/scsi/sr_mod.ko
-ISOFS_KO_DOCKER := $(MODROOT)/$(LINUX_KVER)/kernel/fs/isofs/isofs.ko
-SCSI_MOD_KO_DOCKER := $(MODROOT)/$(LINUX_KVER)/kernel/drivers/scsi/scsi_mod.ko
-SD_MOD_KO_DOCKER := $(MODROOT)/$(LINUX_KVER)/kernel/drivers/scsi/sd_mod.ko
-VIRTIO_SCSI_KO_DOCKER := $(MODROOT)/$(LINUX_KVER)/kernel/drivers/scsi/virtio_scsi.ko
+E1000_KO_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/drivers/net/ethernet/intel/e1000/e1000.ko
+E1000_ZST_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/drivers/net/ethernet/intel/e1000/e1000.ko.zst
+VIRTIO_NET_KO_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/drivers/net/virtio_net.ko
+VIRTIO_NET_ZST_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/drivers/net/virtio_net.ko.zst
+NET_FAILOVER_KO_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/drivers/net/net_failover.ko
+NET_FAILOVER_ZST_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/drivers/net/net_failover.ko.zst
+FAILOVER_KO_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/net/core/failover.ko
+FAILOVER_ZST_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/net/core/failover.ko.zst
+ATA_PIIX_KO_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/drivers/ata/ata_piix.ko
+ATA_PIIX_ZST_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/drivers/ata/ata_piix.ko.zst
+CDROM_KO_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/drivers/cdrom/cdrom.ko
+CDROM_ZST_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/drivers/cdrom/cdrom.ko.zst
+SR_MOD_KO_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/drivers/scsi/sr_mod.ko
+SR_MOD_ZST_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/drivers/scsi/sr_mod.ko.zst
+ISOFS_KO_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/fs/isofs/isofs.ko
+ISOFS_ZST_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/fs/isofs/isofs.ko.zst
+SCSI_MOD_KO_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/drivers/scsi/scsi_mod.ko
+SCSI_MOD_ZST_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/drivers/scsi/scsi_mod.ko.zst
+SD_MOD_KO_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/drivers/scsi/sd_mod.ko
+SD_MOD_ZST_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/drivers/scsi/sd_mod.ko.zst
+VIRTIO_SCSI_KO_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/drivers/scsi/virtio_scsi.ko
+VIRTIO_SCSI_ZST_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/drivers/scsi/virtio_scsi.ko.zst
 GOPATH    := $(shell go env GOPATH)
 KRAGENT_PKG := github.com/bradfitz/qemu-guest-kragent
 KRAGENT_BIN := $(BUILD)/qemu-guest-kragent
@@ -79,7 +91,13 @@ UROOT_CMDS := \
   github.com/u-root/u-root/cmds/core/sshd \
   github.com/u-root/u-root/cmds/core/ps
 
-.PHONY: all init kernel kernel-arch kernel-docker efi-bootloader kragent-docker initramfs initramfs-arch iso qemu qemu-mac qemu-mac-bridge clean
+ifeq ($(HOST_OS),Darwin)
+INITRAMFS_DEPS := init Makefile kernel-docker
+else
+INITRAMFS_DEPS := init Makefile
+endif
+
+.PHONY: all init kernel kernel-arch kernel-docker efi-bootloader kragent-docker initramfs initramfs-arch iso iso-docker qemu qemu-mac qemu-mac-bridge clean
 
 all: qemu
 
@@ -174,7 +192,7 @@ kernel-docker: | $(BUILD)
 
 
 # Build initramfs (u-root + our uinit). We force module mode so u-root uses your repo's go.mod/go.sum.
-initramfs: init Makefile | $(BUILD)
+initramfs: $(INITRAMFS_DEPS) | $(BUILD)
 	go install github.com/u-root/u-root@$(UROOT_VER)
 	@set -e; \
 	FILES_ARGS=""; \
@@ -191,6 +209,9 @@ initramfs: init Makefile | $(BUILD)
 	if command -v zstd >/dev/null 2>&1 && [ -r "$(E1000_ZST)" ]; then \
 	  zstd -d -c "$(E1000_ZST)" > "$(E1000_KO)"; \
 	  FILES_ARGS="-files $(E1000_KO):lib/modules/$(KVER)/kernel/drivers/net/ethernet/intel/e1000/e1000.ko"; \
+	elif command -v zstd >/dev/null 2>&1 && [ -r "$(E1000_ZST_DOCKER)" ]; then \
+	  zstd -d -c "$(E1000_ZST_DOCKER)" > "$(E1000_KO)"; \
+	  FILES_ARGS="-files $(E1000_KO):lib/modules/$(LINUX_KVER)/kernel/drivers/net/ethernet/intel/e1000/e1000.ko"; \
 	elif [ -r "$(E1000_KO_DOCKER)" ]; then \
 	  FILES_ARGS="-files $(E1000_KO_DOCKER):lib/modules/$(LINUX_KVER)/kernel/drivers/net/ethernet/intel/e1000/e1000.ko"; \
 	else \
@@ -199,6 +220,9 @@ initramfs: init Makefile | $(BUILD)
 	if command -v zstd >/dev/null 2>&1 && [ -r "$(FAILOVER_ZST)" ]; then \
 	  zstd -d -c "$(FAILOVER_ZST)" > "$(FAILOVER_KO)"; \
 	  FILES_ARGS="$$FILES_ARGS -files $(FAILOVER_KO):lib/modules/$(KVER)/kernel/net/core/failover.ko"; \
+	elif command -v zstd >/dev/null 2>&1 && [ -r "$(FAILOVER_ZST_DOCKER)" ]; then \
+	  zstd -d -c "$(FAILOVER_ZST_DOCKER)" > "$(FAILOVER_KO)"; \
+	  FILES_ARGS="$$FILES_ARGS -files $(FAILOVER_KO):lib/modules/$(LINUX_KVER)/kernel/net/core/failover.ko"; \
 	elif [ -r "$(FAILOVER_KO_DOCKER)" ]; then \
 	  FILES_ARGS="$$FILES_ARGS -files $(FAILOVER_KO_DOCKER):lib/modules/$(LINUX_KVER)/kernel/net/core/failover.ko"; \
 	else \
@@ -207,6 +231,9 @@ initramfs: init Makefile | $(BUILD)
 	if command -v zstd >/dev/null 2>&1 && [ -r "$(VIRTIO_NET_ZST)" ]; then \
 	  zstd -d -c "$(VIRTIO_NET_ZST)" > "$(VIRTIO_NET_KO)"; \
 	  FILES_ARGS="$$FILES_ARGS -files $(VIRTIO_NET_KO):lib/modules/$(KVER)/kernel/drivers/net/virtio_net.ko"; \
+	elif command -v zstd >/dev/null 2>&1 && [ -r "$(VIRTIO_NET_ZST_DOCKER)" ]; then \
+	  zstd -d -c "$(VIRTIO_NET_ZST_DOCKER)" > "$(VIRTIO_NET_KO)"; \
+	  FILES_ARGS="$$FILES_ARGS -files $(VIRTIO_NET_KO):lib/modules/$(LINUX_KVER)/kernel/drivers/net/virtio_net.ko"; \
 	elif [ -r "$(VIRTIO_NET_KO_DOCKER)" ]; then \
 	  FILES_ARGS="$$FILES_ARGS -files $(VIRTIO_NET_KO_DOCKER):lib/modules/$(LINUX_KVER)/kernel/drivers/net/virtio_net.ko"; \
 	else \
@@ -215,6 +242,9 @@ initramfs: init Makefile | $(BUILD)
 	if command -v zstd >/dev/null 2>&1 && [ -r "$(NET_FAILOVER_ZST)" ]; then \
 	  zstd -d -c "$(NET_FAILOVER_ZST)" > "$(NET_FAILOVER_KO)"; \
 	  FILES_ARGS="$$FILES_ARGS -files $(NET_FAILOVER_KO):lib/modules/$(KVER)/kernel/drivers/net/net_failover.ko"; \
+	elif command -v zstd >/dev/null 2>&1 && [ -r "$(NET_FAILOVER_ZST_DOCKER)" ]; then \
+	  zstd -d -c "$(NET_FAILOVER_ZST_DOCKER)" > "$(NET_FAILOVER_KO)"; \
+	  FILES_ARGS="$$FILES_ARGS -files $(NET_FAILOVER_KO):lib/modules/$(LINUX_KVER)/kernel/drivers/net/net_failover.ko"; \
 	elif [ -r "$(NET_FAILOVER_KO_DOCKER)" ]; then \
 	  FILES_ARGS="$$FILES_ARGS -files $(NET_FAILOVER_KO_DOCKER):lib/modules/$(LINUX_KVER)/kernel/drivers/net/net_failover.ko"; \
 	else \
@@ -223,6 +253,9 @@ initramfs: init Makefile | $(BUILD)
 	if command -v zstd >/dev/null 2>&1 && [ -r "$(ATA_PIIX_ZST)" ]; then \
 	  zstd -d -c "$(ATA_PIIX_ZST)" > "$(ATA_PIIX_KO)"; \
 	  FILES_ARGS="$$FILES_ARGS -files $(ATA_PIIX_KO):lib/modules/$(KVER)/kernel/drivers/ata/ata_piix.ko"; \
+	elif command -v zstd >/dev/null 2>&1 && [ -r "$(ATA_PIIX_ZST_DOCKER)" ]; then \
+	  zstd -d -c "$(ATA_PIIX_ZST_DOCKER)" > "$(ATA_PIIX_KO)"; \
+	  FILES_ARGS="$$FILES_ARGS -files $(ATA_PIIX_KO):lib/modules/$(LINUX_KVER)/kernel/drivers/ata/ata_piix.ko"; \
 	elif [ -r "$(ATA_PIIX_KO_DOCKER)" ]; then \
 	  FILES_ARGS="$$FILES_ARGS -files $(ATA_PIIX_KO_DOCKER):lib/modules/$(LINUX_KVER)/kernel/drivers/ata/ata_piix.ko"; \
 	else \
@@ -231,6 +264,9 @@ initramfs: init Makefile | $(BUILD)
 	if command -v zstd >/dev/null 2>&1 && [ -r "$(CDROM_ZST)" ]; then \
 	  zstd -d -c "$(CDROM_ZST)" > "$(CDROM_KO)"; \
 	  FILES_ARGS="$$FILES_ARGS -files $(CDROM_KO):lib/modules/$(KVER)/kernel/drivers/cdrom/cdrom.ko"; \
+	elif command -v zstd >/dev/null 2>&1 && [ -r "$(CDROM_ZST_DOCKER)" ]; then \
+	  zstd -d -c "$(CDROM_ZST_DOCKER)" > "$(CDROM_KO)"; \
+	  FILES_ARGS="$$FILES_ARGS -files $(CDROM_KO):lib/modules/$(LINUX_KVER)/kernel/drivers/cdrom/cdrom.ko"; \
 	elif [ -r "$(CDROM_KO_DOCKER)" ]; then \
 	  FILES_ARGS="$$FILES_ARGS -files $(CDROM_KO_DOCKER):lib/modules/$(LINUX_KVER)/kernel/drivers/cdrom/cdrom.ko"; \
 	else \
@@ -239,6 +275,9 @@ initramfs: init Makefile | $(BUILD)
 	if command -v zstd >/dev/null 2>&1 && [ -r "$(SR_MOD_ZST)" ]; then \
 	  zstd -d -c "$(SR_MOD_ZST)" > "$(SR_MOD_KO)"; \
 	  FILES_ARGS="$$FILES_ARGS -files $(SR_MOD_KO):lib/modules/$(KVER)/kernel/drivers/scsi/sr_mod.ko"; \
+	elif command -v zstd >/dev/null 2>&1 && [ -r "$(SR_MOD_ZST_DOCKER)" ]; then \
+	  zstd -d -c "$(SR_MOD_ZST_DOCKER)" > "$(SR_MOD_KO)"; \
+	  FILES_ARGS="$$FILES_ARGS -files $(SR_MOD_KO):lib/modules/$(LINUX_KVER)/kernel/drivers/scsi/sr_mod.ko"; \
 	elif [ -r "$(SR_MOD_KO_DOCKER)" ]; then \
 	  FILES_ARGS="$$FILES_ARGS -files $(SR_MOD_KO_DOCKER):lib/modules/$(LINUX_KVER)/kernel/drivers/scsi/sr_mod.ko"; \
 	else \
@@ -247,6 +286,9 @@ initramfs: init Makefile | $(BUILD)
 	if command -v zstd >/dev/null 2>&1 && [ -r "$(ISOFS_ZST)" ]; then \
 	  zstd -d -c "$(ISOFS_ZST)" > "$(ISOFS_KO)"; \
 	  FILES_ARGS="$$FILES_ARGS -files $(ISOFS_KO):lib/modules/$(KVER)/kernel/fs/isofs/isofs.ko"; \
+	elif command -v zstd >/dev/null 2>&1 && [ -r "$(ISOFS_ZST_DOCKER)" ]; then \
+	  zstd -d -c "$(ISOFS_ZST_DOCKER)" > "$(ISOFS_KO)"; \
+	  FILES_ARGS="$$FILES_ARGS -files $(ISOFS_KO):lib/modules/$(LINUX_KVER)/kernel/fs/isofs/isofs.ko"; \
 	elif [ -r "$(ISOFS_KO_DOCKER)" ]; then \
 	  FILES_ARGS="$$FILES_ARGS -files $(ISOFS_KO_DOCKER):lib/modules/$(LINUX_KVER)/kernel/fs/isofs/isofs.ko"; \
 	else \
@@ -255,6 +297,9 @@ initramfs: init Makefile | $(BUILD)
 	if command -v zstd >/dev/null 2>&1 && [ -r "$(SCSI_MOD_ZST)" ]; then \
 	  zstd -d -c "$(SCSI_MOD_ZST)" > "$(SCSI_MOD_KO)"; \
 	  FILES_ARGS="$$FILES_ARGS -files $(SCSI_MOD_KO):lib/modules/$(KVER)/kernel/drivers/scsi/scsi_mod.ko"; \
+	elif command -v zstd >/dev/null 2>&1 && [ -r "$(SCSI_MOD_ZST_DOCKER)" ]; then \
+	  zstd -d -c "$(SCSI_MOD_ZST_DOCKER)" > "$(SCSI_MOD_KO)"; \
+	  FILES_ARGS="$$FILES_ARGS -files $(SCSI_MOD_KO):lib/modules/$(LINUX_KVER)/kernel/drivers/scsi/scsi_mod.ko"; \
 	elif [ -r "$(SCSI_MOD_KO_DOCKER)" ]; then \
 	  FILES_ARGS="$$FILES_ARGS -files $(SCSI_MOD_KO_DOCKER):lib/modules/$(LINUX_KVER)/kernel/drivers/scsi/scsi_mod.ko"; \
 	else \
@@ -263,6 +308,9 @@ initramfs: init Makefile | $(BUILD)
 	if command -v zstd >/dev/null 2>&1 && [ -r "$(SD_MOD_ZST)" ]; then \
 	  zstd -d -c "$(SD_MOD_ZST)" > "$(SD_MOD_KO)"; \
 	  FILES_ARGS="$$FILES_ARGS -files $(SD_MOD_KO):lib/modules/$(KVER)/kernel/drivers/scsi/sd_mod.ko"; \
+	elif command -v zstd >/dev/null 2>&1 && [ -r "$(SD_MOD_ZST_DOCKER)" ]; then \
+	  zstd -d -c "$(SD_MOD_ZST_DOCKER)" > "$(SD_MOD_KO)"; \
+	  FILES_ARGS="$$FILES_ARGS -files $(SD_MOD_KO):lib/modules/$(LINUX_KVER)/kernel/drivers/scsi/sd_mod.ko"; \
 	elif [ -r "$(SD_MOD_KO_DOCKER)" ]; then \
 	  FILES_ARGS="$$FILES_ARGS -files $(SD_MOD_KO_DOCKER):lib/modules/$(LINUX_KVER)/kernel/drivers/scsi/sd_mod.ko"; \
 	else \
@@ -271,6 +319,9 @@ initramfs: init Makefile | $(BUILD)
 	if command -v zstd >/dev/null 2>&1 && [ -r "$(VIRTIO_SCSI_ZST)" ]; then \
 	  zstd -d -c "$(VIRTIO_SCSI_ZST)" > "$(VIRTIO_SCSI_KO)"; \
 	  FILES_ARGS="$$FILES_ARGS -files $(VIRTIO_SCSI_KO):lib/modules/$(KVER)/kernel/drivers/scsi/virtio_scsi.ko"; \
+	elif command -v zstd >/dev/null 2>&1 && [ -r "$(VIRTIO_SCSI_ZST_DOCKER)" ]; then \
+	  zstd -d -c "$(VIRTIO_SCSI_ZST_DOCKER)" > "$(VIRTIO_SCSI_KO)"; \
+	  FILES_ARGS="$$FILES_ARGS -files $(VIRTIO_SCSI_KO):lib/modules/$(LINUX_KVER)/kernel/drivers/scsi/virtio_scsi.ko"; \
 	elif [ -r "$(VIRTIO_SCSI_KO_DOCKER)" ]; then \
 	  FILES_ARGS="$$FILES_ARGS -files $(VIRTIO_SCSI_KO_DOCKER):lib/modules/$(LINUX_KVER)/kernel/drivers/scsi/virtio_scsi.ko"; \
 	else \
@@ -324,6 +375,18 @@ iso: initramfs kernel
 	cp -f $(INITRAMFS) $(ISODIR)/boot/initramfs.cpio
 	cp -f assets/grub/grub.cfg $(ISODIR)/boot/grub/grub.cfg
 	grub-mkrescue -o $(ISO) $(ISODIR)
+
+# Build ISO using Docker (for macOS)
+iso-docker: initramfs kernel-docker
+	mkdir -p $(ISODIR)/boot/grub
+	cp -f $(VMLINUX) $(ISODIR)/boot/vmlinuz
+	cp -f $(INITRAMFS) $(ISODIR)/boot/initramfs.cpio
+	cp -f assets/grub/grub.cfg $(ISODIR)/boot/grub/grub.cfg
+	docker run --platform linux/amd64 --rm -v $(abspath $(BUILD)):/work ubuntu:24.04 sh -c '\
+	  set -e; \
+	  apt-get update >/dev/null 2>&1; \
+	  apt-get install -y --no-install-recommends grub-pc-bin xorriso mtools >/dev/null 2>&1; \
+	  grub-mkrescue -o /work/goos.iso /work/iso'
 
 
 # Boot the kernel+initramfs in QEMU. Add virtio-rng to avoid entropy stalls.

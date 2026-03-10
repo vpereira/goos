@@ -47,6 +47,38 @@ qemu-img create -f qcow2 build/goos-disk.qcow2 1G
 
 After rebuilding the ISO/initramfs, delete and recreate the disk before reinstalling.
 
+## Proxmox install
+
+Before install:
+- BIOS: SeaBIOS
+- Machine: q35 or i440fx
+- CD/DVD: attach `goos.iso`
+- Disk: add target disk (for example `scsi0`)
+- Network: VirtIO on your bridge
+- Serial port: add `serial0`
+- Console: use the serial terminal
+
+Install with:
+```
+qm terminal <vmid>
+```
+
+The ISO boots via BIOS, and the installer runs on `ttyS0`.
+
+After install:
+- Remove the ISO
+- Change BIOS to OVMF (UEFI)
+- Add an EFI disk
+- Boot from the installed disk
+
+Example:
+```
+qm set <vmid> --delete ide2
+qm set <vmid> --bios ovmf
+qm set <vmid> --efidisk0 <storage>:1,efitype=4m,pre-enrolled-keys=0
+qm set <vmid> --boot order=scsi0;net0
+```
+
 ## Run ISO installer (BIOS)
 
 ```
