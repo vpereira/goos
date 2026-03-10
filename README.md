@@ -1,31 +1,21 @@
-# GOOS build and run
+# GOOS
 
-This repo builds a u-root based initramfs, a GRUB ISO, and an EFI disk install.
+Build targets:
 
-## Build
-
-Build initramfs only:
 ```
 make clean initramfs
-```
-
-Build ISO (requires `grub-mkrescue`):
-```
-make clean initramfs iso
-```
-
-## Run (initramfs)
-
-Boot kernel+initramfs directly:
-```
+make clean iso
+make clean iso-docker
 make qemu
+make qemu-mac-bridge
 ```
+
+`iso-docker` is the macOS path for building `build/goos.iso`.
 
 ## macOS
 
-macOS uses Docker for the kernel and socket_vmnet for bridged networking.
+Start `socket_vmnet` first:
 
-Start socket_vmnet (bridged to your host NIC):
 ```
 sudo /opt/homebrew/opt/socket_vmnet/bin/socket_vmnet \
   --vmnet-mode=bridged \
@@ -33,81 +23,40 @@ sudo /opt/homebrew/opt/socket_vmnet/bin/socket_vmnet \
   /var/run/socket_vmnet
 ```
 
-Run QEMU via socket_vmnet:
+Then run:
+
 ```
 make qemu-mac-bridge
 ```
 
-## Create a disk (recreate after rebuild)
-
-Create a fresh disk before installing:
-```
-qemu-img create -f qcow2 build/goos-disk.qcow2 1G
-```
-
-After rebuilding the ISO/initramfs, delete and recreate the disk before reinstalling.
-
-## Proxmox install
+## Proxmox
 
 Before install:
 - BIOS: SeaBIOS
-- Machine: q35 or i440fx
 - CD/DVD: attach `goos.iso`
-- Disk: add target disk (for example `scsi0`)
-- Network: VirtIO on your bridge
+- Disk: add target disk
+- Network: VirtIO
 - Serial port: add `serial0`
-- Console: use the serial terminal
 
-Install with:
+Use:
+
 ```
 qm terminal <vmid>
 ```
 
-The ISO boots via BIOS, and the installer runs on `ttyS0`.
+The installer ISO boots via BIOS and runs on `ttyS0`.
 
 After install:
 - Remove the ISO
-- Change BIOS to OVMF (UEFI)
+- Change BIOS to OVMF
 - Add an EFI disk
 - Boot from the installed disk
 
 Example:
+
 ```
 qm set <vmid> --delete ide2
 qm set <vmid> --bios ovmf
 qm set <vmid> --efidisk0 <storage>:1,efitype=4m,pre-enrolled-keys=0
 qm set <vmid> --boot order=scsi0;net0
 ```
-
-## Run ISO installer (BIOS)
-
-```
-sudo qemu-system-x86_64 -m 1024 -nographic -accel kvm \
-  -drive file=build/goos.iso,if=virtio,format=raw,readonly=on \
-  -drive file=build/goos-disk.qcow2,if=virtio,format=qcow2 \
-  -device virtio-rng-pci \
-  -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
-  -device virtio-serial-pci \
-  -chardev socket,id=qga0,path=build/qga.sock,server=on,wait=off \
-  -device virtserialport,chardev=qga0,name=org.qemu.guest_agent.0
-```
-
-## Boot installed disk (UEFI)
-
-```
-cp /usr/share/edk2/x64/OVMF_VARS.4m.fd build/OVMF_VARS.fd
-
-sudo qemu-system-x86_64 -m 1024 -nographic -accel kvm \
-  -drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/x64/OVMF_CODE.4m.fd \
-  -drive if=pflash,format=raw,file=build/OVMF_VARS.fd \
-  -drive id=disk0,file=build/goos-disk.qcow2,if=none,format=qcow2 \
-  -device virtio-blk-pci,drive=disk0,bootindex=0 \
-  -boot order=c \
-  -device virtio-rng-pci \
-  -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
-  -device virtio-serial-pci \
-  -chardev socket,id=qga0,path=build/qga.sock,server=on,wait=off \
-  -device virtserialport,chardev=qga0,name=org.qemu.guest_agent.0
-```
-
-If your OVMF files are in a different path, update the `-drive if=pflash` paths.
