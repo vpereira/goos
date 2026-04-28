@@ -97,13 +97,31 @@ tasks:
           cp -L "$k" "{{.VMLINUX}}"
           exit 0
         fi
-        k="$(ls -1 /boot/vmlinuz* 2>/dev/null | head -n 1)"
+        k="$(find /boot -maxdepth 1 -type f -name 'vmlinuz*' 2>/dev/null | sort | tail -n 1)"
         if [ -n "$k" ] && [ -r "$k" ]; then
           echo "Using kernel: $k"
           cp -L "$k" "{{.VMLINUX}}"
           exit 0
         fi
-        echo "ERROR: Could not find readable kernel image under /boot or /usr/lib/modules"
+        k="$(find /boot -maxdepth 1 -type l -name 'vmlinuz*' 2>/dev/null | sort | tail -n 1)"
+        if [ -n "$k" ] && [ -r "$k" ]; then
+          echo "Using kernel: $k"
+          cp -L "$k" "{{.VMLINUX}}"
+          exit 0
+        fi
+        if command -v docker >/dev/null 2>&1; then
+          echo "Falling back to Docker kernel extraction"
+          docker rm -f goos-kernel-tmp 2>/dev/null || true
+          docker run --platform linux/amd64 --name goos-kernel-tmp ubuntu:24.04 sh -c \
+            "apt-get update && apt-get install -y --no-install-recommends linux-image-generic >/dev/null 2>&1 && cp /boot/vmlinuz-* /vmlinuz"
+          docker cp goos-kernel-tmp:/vmlinuz {{.VMLINUX}}
+          mkdir -p {{.MODROOT}}
+          docker cp goos-kernel-tmp:/lib/modules/. {{.MODROOT}}
+          docker rm goos-kernel-tmp >/dev/null
+          echo "Kernel extracted to {{.VMLINUX}}"
+          exit 0
+        fi
+        echo "ERROR: Could not find readable kernel image under /boot or /usr/lib/modules and docker is unavailable"
         exit 1
 
   kernel-arch:
