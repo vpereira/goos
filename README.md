@@ -32,11 +32,12 @@ make qemu-mac-bridge
 ## Proxmox
 
 Before install:
-- BIOS: SeaBIOS
+- BIOS: OVMF or SeaBIOS
 - CD/DVD: attach `goos.iso`
 - Disk: add target disk
 - Network: VirtIO
 - Serial port: add `serial0`
+- If using OVMF: add an EFI disk
 
 Use:
 
@@ -44,19 +45,17 @@ Use:
 qm terminal <vmid>
 ```
 
-The installer ISO boots via BIOS and runs on `ttyS0`.
+The installer runs on `ttyS0`.
 
 After install:
 - Remove the ISO
-- Change BIOS to OVMF
-- Add an EFI disk
+- Keep OVMF for the installed disk
 - Boot from the installed disk
 
 Example:
 
 ```
 qm set <vmid> --delete ide2
-qm set <vmid> --bios ovmf
 qm set <vmid> --efidisk0 <storage>:1,efitype=4m,pre-enrolled-keys=0
 qm set <vmid> --boot order=scsi0;net0
 ```
