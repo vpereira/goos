@@ -38,6 +38,14 @@ SD_MOD_ZST := /usr/lib/modules/$(KVER)/kernel/drivers/scsi/sd_mod.ko.zst
 SD_MOD_KO  := $(BUILD)/sd_mod.ko
 VIRTIO_SCSI_ZST := /usr/lib/modules/$(KVER)/kernel/drivers/scsi/virtio_scsi.ko.zst
 VIRTIO_SCSI_KO  := $(BUILD)/virtio_scsi.ko
+NLS_CP437_ZST := /usr/lib/modules/$(KVER)/kernel/fs/nls/nls_cp437.ko.zst
+NLS_CP437_KO  := $(BUILD)/nls_cp437.ko
+NLS_ASCII_ZST := /usr/lib/modules/$(KVER)/kernel/fs/nls/nls_ascii.ko.zst
+NLS_ASCII_KO  := $(BUILD)/nls_ascii.ko
+FAT_ZST := /usr/lib/modules/$(KVER)/kernel/fs/fat/fat.ko.zst
+FAT_KO  := $(BUILD)/fat.ko
+VFAT_ZST := /usr/lib/modules/$(KVER)/kernel/fs/fat/vfat.ko.zst
+VFAT_KO  := $(BUILD)/vfat.ko
 E1000_KO_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/drivers/net/ethernet/intel/e1000/e1000.ko
 E1000_ZST_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/drivers/net/ethernet/intel/e1000/e1000.ko.zst
 VIRTIO_NET_KO_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/drivers/net/virtio_net.ko
@@ -60,6 +68,14 @@ SD_MOD_KO_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/drivers/scsi/sd_mod.ko
 SD_MOD_ZST_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/drivers/scsi/sd_mod.ko.zst
 VIRTIO_SCSI_KO_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/drivers/scsi/virtio_scsi.ko
 VIRTIO_SCSI_ZST_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/drivers/scsi/virtio_scsi.ko.zst
+NLS_CP437_KO_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/fs/nls/nls_cp437.ko
+NLS_CP437_ZST_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/fs/nls/nls_cp437.ko.zst
+NLS_ASCII_KO_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/fs/nls/nls_ascii.ko
+NLS_ASCII_ZST_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/fs/nls/nls_ascii.ko.zst
+FAT_KO_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/fs/fat/fat.ko
+FAT_ZST_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/fs/fat/fat.ko.zst
+VFAT_KO_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/fs/fat/vfat.ko
+VFAT_ZST_DOCKER = $(MODROOT)/$(LINUX_KVER)/kernel/fs/fat/vfat.ko.zst
 GOPATH    := $(shell go env GOPATH)
 KRAGENT_PKG := github.com/bradfitz/qemu-guest-kragent
 KRAGENT_BIN := $(BUILD)/qemu-guest-kragent
@@ -333,6 +349,50 @@ initramfs: $(INITRAMFS_DEPS) | $(BUILD)
 	else \
 	  echo "WARN: virtio_scsi module not found or zstd missing; skipping virtio_scsi.ko"; \
 	fi; \
+	if command -v zstd >/dev/null 2>&1 && [ -r "$(NLS_CP437_ZST)" ]; then \
+	  zstd -d -c "$(NLS_CP437_ZST)" > "$(NLS_CP437_KO)"; \
+	  FILES_ARGS="$$FILES_ARGS -files $(NLS_CP437_KO):lib/modules/$(KVER)/kernel/fs/nls/nls_cp437.ko"; \
+	elif command -v zstd >/dev/null 2>&1 && [ -r "$(NLS_CP437_ZST_DOCKER)" ]; then \
+	  zstd -d -c "$(NLS_CP437_ZST_DOCKER)" > "$(NLS_CP437_KO)"; \
+	  FILES_ARGS="$$FILES_ARGS -files $(NLS_CP437_KO):lib/modules/$(LINUX_KVER)/kernel/fs/nls/nls_cp437.ko"; \
+	elif [ -r "$(NLS_CP437_KO_DOCKER)" ]; then \
+	  FILES_ARGS="$$FILES_ARGS -files $(NLS_CP437_KO_DOCKER):lib/modules/$(LINUX_KVER)/kernel/fs/nls/nls_cp437.ko"; \
+	else \
+	  echo "WARN: nls_cp437 module not found or zstd missing; skipping nls_cp437.ko"; \
+	fi; \
+	if command -v zstd >/dev/null 2>&1 && [ -r "$(NLS_ASCII_ZST)" ]; then \
+	  zstd -d -c "$(NLS_ASCII_ZST)" > "$(NLS_ASCII_KO)"; \
+	  FILES_ARGS="$$FILES_ARGS -files $(NLS_ASCII_KO):lib/modules/$(KVER)/kernel/fs/nls/nls_ascii.ko"; \
+	elif command -v zstd >/dev/null 2>&1 && [ -r "$(NLS_ASCII_ZST_DOCKER)" ]; then \
+	  zstd -d -c "$(NLS_ASCII_ZST_DOCKER)" > "$(NLS_ASCII_KO)"; \
+	  FILES_ARGS="$$FILES_ARGS -files $(NLS_ASCII_KO):lib/modules/$(LINUX_KVER)/kernel/fs/nls/nls_ascii.ko"; \
+	elif [ -r "$(NLS_ASCII_KO_DOCKER)" ]; then \
+	  FILES_ARGS="$$FILES_ARGS -files $(NLS_ASCII_KO_DOCKER):lib/modules/$(LINUX_KVER)/kernel/fs/nls/nls_ascii.ko"; \
+	else \
+	  echo "WARN: nls_ascii module not found or zstd missing; skipping nls_ascii.ko"; \
+	fi; \
+	if command -v zstd >/dev/null 2>&1 && [ -r "$(FAT_ZST)" ]; then \
+	  zstd -d -c "$(FAT_ZST)" > "$(FAT_KO)"; \
+	  FILES_ARGS="$$FILES_ARGS -files $(FAT_KO):lib/modules/$(KVER)/kernel/fs/fat/fat.ko"; \
+	elif command -v zstd >/dev/null 2>&1 && [ -r "$(FAT_ZST_DOCKER)" ]; then \
+	  zstd -d -c "$(FAT_ZST_DOCKER)" > "$(FAT_KO)"; \
+	  FILES_ARGS="$$FILES_ARGS -files $(FAT_KO):lib/modules/$(LINUX_KVER)/kernel/fs/fat/fat.ko"; \
+	elif [ -r "$(FAT_KO_DOCKER)" ]; then \
+	  FILES_ARGS="$$FILES_ARGS -files $(FAT_KO_DOCKER):lib/modules/$(LINUX_KVER)/kernel/fs/fat/fat.ko"; \
+	else \
+	  echo "WARN: fat module not found or zstd missing; skipping fat.ko"; \
+	fi; \
+	if command -v zstd >/dev/null 2>&1 && [ -r "$(VFAT_ZST)" ]; then \
+	  zstd -d -c "$(VFAT_ZST)" > "$(VFAT_KO)"; \
+	  FILES_ARGS="$$FILES_ARGS -files $(VFAT_KO):lib/modules/$(KVER)/kernel/fs/fat/vfat.ko"; \
+	elif command -v zstd >/dev/null 2>&1 && [ -r "$(VFAT_ZST_DOCKER)" ]; then \
+	  zstd -d -c "$(VFAT_ZST_DOCKER)" > "$(VFAT_KO)"; \
+	  FILES_ARGS="$$FILES_ARGS -files $(VFAT_KO):lib/modules/$(LINUX_KVER)/kernel/fs/fat/vfat.ko"; \
+	elif [ -r "$(VFAT_KO_DOCKER)" ]; then \
+	  FILES_ARGS="$$FILES_ARGS -files $(VFAT_KO_DOCKER):lib/modules/$(LINUX_KVER)/kernel/fs/fat/vfat.ko"; \
+	else \
+	  echo "WARN: vfat module not found or zstd missing; skipping vfat.ko"; \
+	fi; \
 	if [ ! -r "$(EFI_BOOT_BIN)" ] && command -v docker >/dev/null 2>&1; then \
 	  $(MAKE) efi-bootloader; \
 	fi; \
@@ -391,7 +451,7 @@ iso-docker: initramfs kernel-docker
 	docker run --platform linux/amd64 --rm -v $(abspath $(BUILD)):/work ubuntu:24.04 sh -c '\
 	  set -e; \
 	  apt-get update >/dev/null 2>&1; \
-	  apt-get install -y --no-install-recommends grub-pc-bin xorriso mtools >/dev/null 2>&1; \
+	  apt-get install -y --no-install-recommends grub-pc-bin grub-efi-amd64-bin xorriso mtools >/dev/null 2>&1; \
 	  grub-mkrescue -o /work/goos.iso /work/iso'
 
 

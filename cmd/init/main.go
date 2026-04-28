@@ -193,7 +193,7 @@ func loadInstallConfig() installConfig {
 		Network:    "dhcp",
 		SSHEnabled: true,
 	}
-	f, err := os.Open("/etc/goos-installer.conf")
+	f, err := openInstallConfig()
 	if err != nil {
 		return cfg
 	}
@@ -227,6 +227,107 @@ func loadInstallConfig() installConfig {
 	return cfg
 }
 
+func openInstallConfig() (*os.File, error) {
+	for _, path := range []string{
+		"/etc/goos-installer.conf",
+		"/goos-installer.conf",
+	} {
+		f, err := os.Open(path)
+		if err == nil {
+			log("goos: using install config from " + path)
+			return f, nil
+		}
+	}
+
+	if path, err := mountESPAndFindConfig(); err == nil {
+		f, openErr := os.Open(path)
+		if openErr == nil {
+			log("goos: using install config from " + path)
+			return f, nil
+		}
+		return nil, openErr
+	}
+
+	log("goos: no install config found; using defaults")
+	return nil, os.ErrNotExist
+}
+
+func mountESPAndFindConfig() (string, error) {
+	loadESPModules()
+	target := "/mnt/esp"
+	_ = os.MkdirAll(target, 0o755)
+
+	for _, dev := range espCandidates() {
+		if _, err := os.Stat(dev); err != nil {
+			continue
+		}
+		_ = syscall.Unmount(target, 0)
+		if err := syscall.Mount(dev, target, "vfat", syscall.MS_RDONLY, ""); err != nil {
+			continue
+		}
+		for _, rel := range []string{"etc/goos-installer.conf", "goos-installer.conf"} {
+			path := filepath.Join(target, rel)
+			if _, err := os.Stat(path); err == nil {
+				return path, nil
+			}
+		}
+	}
+
+	return "", os.ErrNotExist
+}
+
+func espCandidates() []string {
+	entries, err := os.ReadDir("/sys/block")
+	if err != nil {
+		return nil
+	}
+
+	var candidates []string
+	for _, e := range entries {
+		name := e.Name()
+		if name == "loop0" || strings.HasPrefix(name, "loop") || strings.HasPrefix(name, "ram") || strings.HasPrefix(name, "sr") || strings.HasPrefix(name, "fd") {
+			continue
+		}
+		sysBlock := filepath.Join("/sys/block", name)
+		partitions, err := os.ReadDir(sysBlock)
+		if err != nil {
+			continue
+		}
+		for _, part := range partitions {
+			partName := part.Name()
+			if !strings.HasPrefix(partName, name) {
+				continue
+			}
+			dev := filepath.Join("/dev", partName)
+			if _, err := os.Stat(dev); err == nil {
+				candidates = append(candidates, dev)
+			}
+		}
+	}
+
+	sort.Strings(candidates)
+	return candidates
+}
+
+func loadESPModules() {
+	kver := kernelRelease()
+	if kver == "" {
+		return
+	}
+	for _, mod := range []string{
+		fmt.Sprintf("/lib/modules/%s/kernel/fs/nls/nls_cp437.ko", kver),
+		fmt.Sprintf("/lib/modules/%s/kernel/fs/nls/nls_ascii.ko", kver),
+		fmt.Sprintf("/lib/modules/%s/kernel/fs/fat/fat.ko", kver),
+		fmt.Sprintf("/lib/modules/%s/kernel/fs/fat/vfat.ko", kver),
+	} {
+		if _, err := os.Stat(mod); err == nil {
+			if err := run("insmod", mod); err != nil {
+				log("goos: insmod failed for " + filepath.Base(mod) + ": " + err.Error())
+			}
+		}
+	}
+}
+
 func configureNetwork(iface string, cfg installConfig) {
 	if cfg.Network == "static" && cfg.StaticIPv4 != "" {
 		log("goos: configuring static network on " + iface)
@@ -242,19 +343,56 @@ func configureNetwork(iface string, cfg installConfig) {
 		return
 	}
 
+	waitForLinkReady(iface, 10*time.Second)
+
 	// Try DHCP via u-root dhclient if present.
 	if _, err := exec.LookPath("dhclient"); err == nil {
-		log("goos: attempting DHCP on " + iface)
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-
-		// ipv4 only
-		if err := runCtx(ctx, "dhclient", "-ipv4", "-ipv6=false", iface); err != nil {
+		for attempt := 1; attempt <= 3; attempt++ {
+			log(fmt.Sprintf("goos: attempting DHCP on %s (try %d/3)", iface, attempt))
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			err := runCtx(ctx, "dhclient", "-ipv4", "-ipv6=false", iface)
+			cancel()
+			if err == nil {
+				return
+			}
 			log("goos: dhcp failed: " + err.Error())
+			if attempt < 3 {
+				time.Sleep(3 * time.Second)
+			}
 		}
 	} else {
 		log("goos: dhclient not found in PATH")
 	}
+}
+
+func waitForLinkReady(iface string, timeout time.Duration) {
+	carrierPath := filepath.Join("/sys/class/net", iface, "carrier")
+	operstatePath := filepath.Join("/sys/class/net", iface, "operstate")
+	deadline := time.Now().Add(timeout)
+	log("goos: waiting for link on " + iface)
+
+	for time.Now().Before(deadline) {
+		if linkReady(carrierPath, operstatePath) {
+			log("goos: link is ready on " + iface)
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	log("goos: link wait timed out on " + iface)
+}
+
+func linkReady(carrierPath, operstatePath string) bool {
+	if b, err := os.ReadFile(carrierPath); err == nil && strings.TrimSpace(string(b)) == "1" {
+		return true
+	}
+	if b, err := os.ReadFile(operstatePath); err == nil {
+		switch strings.TrimSpace(string(b)) {
+		case "up", "unknown":
+			return true
+		}
+	}
+	return false
 }
 
 func writeResolvConf(csv string) {
