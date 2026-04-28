@@ -1,16 +1,40 @@
 # GOOS
 
-Build targets:
+Tasks:
 
 ```
-make clean initramfs
-make clean iso
-make clean iso-docker
-make qemu
-make qemu-mac-bridge
+task clean
+task init
+task iso
+task iso-docker
+task qemu
+task qemu-mac
+task qemu-mac-bridge
 ```
 
-`iso-docker` is the macOS path for building `build/goos.iso`.
+`task`
+Shows the public tasks.
+
+`task clean`
+Removes `build/`.
+
+`task init`
+Builds `cmd/init` and `cmd/installer` into `build/`.
+
+`task iso`
+Builds a Linux-hosted ISO. Calls the internal initramfs and kernel tasks, then writes `build/goos.iso`.
+
+`task iso-docker`
+Builds the hybrid BIOS+UEFI ISO with Docker. This is the macOS path and writes `build/goos.iso`.
+
+`task qemu`
+Builds what it needs for a Linux local boot and runs the image in QEMU.
+
+`task qemu-mac`
+Builds what it needs for a macOS local boot and runs the image in QEMU with user networking.
+
+`task qemu-mac-bridge`
+Builds what it needs for a macOS local boot and runs the image in QEMU through `socket_vmnet`.
 
 ## macOS
 
@@ -26,7 +50,7 @@ sudo /opt/homebrew/opt/socket_vmnet/bin/socket_vmnet \
 Then run:
 
 ```
-make qemu-mac-bridge
+task qemu-mac-bridge
 ```
 
 ## Proxmox

@@ -1,0 +1,388 @@
+version: '3'
+
+vars:
+  BUILD: build
+  ISODIR: '{{.BUILD}}/iso'
+  VMLINUX: '{{.BUILD}}/vmlinuz'
+  INITBIN: '{{.BUILD}}/goos-init'
+  INSTALLBIN: '{{.BUILD}}/goos-installer'
+  INITRAMFS: '{{.BUILD}}/initramfs.cpio'
+  INITRAMFS_ARCH: '{{.BUILD}}/initramfs-arch.img'
+  INITRAMFS_MERGED: '{{.BUILD}}/initramfs-merged.cpio'
+  MODROOT: '{{.BUILD}}/modules'
+  KRAGENT_BIN: '{{.BUILD}}/qemu-guest-kragent'
+  SSH_HOST_KEY: '{{.BUILD}}/ssh_host_rsa_key'
+  SSH_AUTH_KEYS: '{{.BUILD}}/authorized_keys'
+  EFI_BOOT_BIN: '{{.BUILD}}/systemd-bootx64.efi'
+  ISO: '{{.BUILD}}/goos.iso'
+  UROOT_VER: v0.16.0
+  KRAGENT_PKG: github.com/bradfitz/qemu-guest-kragent
+
+tasks:
+  default:
+    cmds:
+      - task --list
+
+  init:
+    desc: Build init and installer binaries
+    cmds:
+      - mkdir -p {{.BUILD}}
+      - CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o {{.INITBIN}} ./cmd/init
+      - CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o {{.INSTALLBIN}} ./cmd/installer
+
+  kernel:
+    internal: true
+    desc: Copy a host kernel for local QEMU
+    cmds:
+      - |
+        set -e
+        mkdir -p {{.BUILD}}
+        if [ -r "{{.VMLINUX}}" ]; then
+          echo "Using existing kernel: {{.VMLINUX}}"
+          exit 0
+        fi
+        for k in \
+          /boot/vmlinuz-$(uname -r) \
+          /boot/vmlinuz-linux \
+          /boot/vmlinuz-linux-lts \
+          /boot/vmlinuz
+        do
+          if [ -r "$k" ]; then
+            echo "Using kernel: $k"
+            cp -L "$k" "{{.VMLINUX}}"
+            exit 0
+          fi
+        done
+        k="$(ls -1 /usr/lib/modules/*/vmlinuz 2>/dev/null | sort | tail -n 1)"
+        if [ -n "$k" ] && [ -r "$k" ]; then
+          echo "Using kernel: $k"
+          cp -L "$k" "{{.VMLINUX}}"
+          exit 0
+        fi
+        k="$(ls -1 /boot/vmlinuz* 2>/dev/null | head -n 1)"
+        if [ -n "$k" ] && [ -r "$k" ]; then
+          echo "Using kernel: $k"
+          cp -L "$k" "{{.VMLINUX}}"
+          exit 0
+        fi
+        echo "ERROR: Could not find readable kernel image under /boot or /usr/lib/modules"
+        exit 1
+
+  kernel-arch:
+    internal: true
+    desc: Install and copy the Arch kernel
+    cmds:
+      - mkdir -p {{.BUILD}}
+      - sudo pacman -S --needed --noconfirm linux
+      - |
+        set -e
+        if [ -r /boot/vmlinuz-linux ]; then
+          k=/boot/vmlinuz-linux
+        else
+          k="$(ls -1 /usr/lib/modules/*/vmlinuz 2>/dev/null | sort | tail -n 1)"
+        fi
+        if [ -z "$k" ] || [ ! -r "$k" ]; then
+          echo "ERROR: Could not find Arch kernel image in /boot/vmlinuz-linux or /usr/lib/modules/*/vmlinuz"
+          exit 1
+        fi
+        echo "Using kernel: $k"
+        sudo cp -L "$k" "{{.VMLINUX}}"
+
+  efi-bootloader:
+    internal: true
+    desc: Fetch systemd-bootx64.efi using Docker
+    cmds:
+      - |
+        set -e
+        mkdir -p {{.BUILD}}
+        if ! command -v docker >/dev/null 2>&1; then
+          echo "ERROR: docker not found; cannot fetch systemd-bootx64.efi"
+          exit 1
+        fi
+        docker run --platform linux/amd64 --rm -v "$(pwd)/{{.BUILD}}:/out" ubuntu:24.04 sh -c '
+          set -e
+          apt-get update >/dev/null 2>&1
+          apt-get install -y --no-install-recommends systemd-boot-efi >/dev/null 2>&1
+          cp /usr/lib/systemd/boot/efi/systemd-bootx64.efi /out/systemd-bootx64.efi'
+
+  kernel-docker:
+    internal: true
+    desc: Extract an amd64 Linux kernel and modules from Docker
+    cmds:
+      - |
+        set -e
+        mkdir -p {{.BUILD}}
+        if [ -r "{{.VMLINUX}}" ]; then
+          echo "Using existing kernel: {{.VMLINUX}}"
+          exit 0
+        fi
+        echo "Extracting x86_64 kernel from Ubuntu..."
+        docker rm -f goos-kernel-tmp 2>/dev/null || true
+        docker run --platform linux/amd64 --name goos-kernel-tmp ubuntu:24.04 sh -c \
+          "apt-get update && apt-get install -y --no-install-recommends linux-image-generic >/dev/null 2>&1 && cp /boot/vmlinuz-* /vmlinuz"
+        docker cp goos-kernel-tmp:/vmlinuz {{.VMLINUX}}
+        mkdir -p {{.MODROOT}}
+        docker cp goos-kernel-tmp:/lib/modules/. {{.MODROOT}}
+        docker rm goos-kernel-tmp >/dev/null
+        echo "Kernel extracted to {{.VMLINUX}}"
+
+  kragent-docker:
+    internal: true
+    desc: Build qemu-guest-kragent inside Docker
+    cmds:
+      - |
+        set -e
+        mkdir -p {{.BUILD}}
+        if ! command -v docker >/dev/null 2>&1; then
+          echo "ERROR: docker not found; cannot build qemu-guest-kragent"
+          exit 1
+        fi
+        docker run --platform linux/amd64 --rm -v "$(pwd)/{{.BUILD}}:/out" -w /src golang:1.22 sh -c '
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOBIN=/out go install {{.KRAGENT_PKG}}@latest'
+
+  initramfs:
+    internal: true
+    desc: Build the u-root initramfs
+    deps:
+      - init
+    cmds:
+      - |
+        set -e
+        mkdir -p {{.BUILD}}
+        if [ "$(uname -s)" = "Darwin" ]; then
+          task kernel-docker >/dev/null
+        fi
+        go install github.com/u-root/u-root@{{.UROOT_VER}}
+
+        BUILD="{{.BUILD}}"
+        MODROOT="{{.MODROOT}}"
+        INITBIN="{{.INITBIN}}"
+        INSTALLBIN="{{.INSTALLBIN}}"
+        INITRAMFS="{{.INITRAMFS}}"
+        SSH_HOST_KEY="{{.SSH_HOST_KEY}}"
+        SSH_AUTH_KEYS="{{.SSH_AUTH_KEYS}}"
+        EFI_BOOT_BIN="{{.EFI_BOOT_BIN}}"
+        KRAGENT_BIN="{{.KRAGENT_BIN}}"
+        AUTH_KEYS="${AUTH_KEYS:-assets/ssh/authorized_keys}"
+        KRAGENT_REQUIRED="${KRAGENT_REQUIRED:-1}"
+        KVER="${KVER:-$(uname -r)}"
+        LINUX_KVER="$(if [ -d "$MODROOT" ]; then ls -1 "$MODROOT" | head -n 1; else uname -r; fi)"
+        FILES_ARGS=""
+
+        if command -v ssh-keygen >/dev/null 2>&1; then
+          if [ ! -r "$SSH_HOST_KEY" ]; then
+            ssh-keygen -t rsa -b 2048 -N "" -f "$SSH_HOST_KEY" >/dev/null
+          fi
+        fi
+
+        if [ -r "$AUTH_KEYS" ]; then
+          cp -f "$AUTH_KEYS" "$SSH_AUTH_KEYS"
+        else
+          : > "$SSH_AUTH_KEYS"
+        fi
+
+        module_specs='
+        e1000|kernel/drivers/net/ethernet/intel/e1000/e1000.ko
+        failover|kernel/net/core/failover.ko
+        virtio_net|kernel/drivers/net/virtio_net.ko
+        net_failover|kernel/drivers/net/net_failover.ko
+        ata_piix|kernel/drivers/ata/ata_piix.ko
+        cdrom|kernel/drivers/cdrom/cdrom.ko
+        sr_mod|kernel/drivers/scsi/sr_mod.ko
+        isofs|kernel/fs/isofs/isofs.ko
+        scsi_mod|kernel/drivers/scsi/scsi_mod.ko
+        sd_mod|kernel/drivers/scsi/sd_mod.ko
+        virtio_scsi|kernel/drivers/scsi/virtio_scsi.ko
+        nls_cp437|kernel/fs/nls/nls_cp437.ko
+        nls_ascii|kernel/fs/nls/nls_ascii.ko
+        fat|kernel/fs/fat/fat.ko
+        vfat|kernel/fs/fat/vfat.ko'
+
+        while IFS='|' read -r name rel; do
+          [ -n "$name" ] || continue
+          out="$BUILD/$name.ko"
+          host_zst="/usr/lib/modules/$KVER/$rel.zst"
+          docker_ko="$MODROOT/$LINUX_KVER/$rel"
+          docker_zst="$docker_ko.zst"
+          if command -v zstd >/dev/null 2>&1 && [ -r "$host_zst" ]; then
+            zstd -d -c "$host_zst" > "$out"
+            FILES_ARGS="$FILES_ARGS -files $out:lib/modules/$KVER/$rel"
+          elif command -v zstd >/dev/null 2>&1 && [ -r "$docker_zst" ]; then
+            zstd -d -c "$docker_zst" > "$out"
+            FILES_ARGS="$FILES_ARGS -files $out:lib/modules/$LINUX_KVER/$rel"
+          elif [ -r "$docker_ko" ]; then
+            FILES_ARGS="$FILES_ARGS -files $docker_ko:lib/modules/$LINUX_KVER/$rel"
+          else
+            echo "WARN: $name module not found or zstd missing; skipping $name.ko"
+          fi
+        done <<EOF
+        $module_specs
+        EOF
+
+        if [ ! -r "$EFI_BOOT_BIN" ] && command -v docker >/dev/null 2>&1; then
+          task efi-bootloader >/dev/null
+        fi
+
+        if [ ! -x "$KRAGENT_BIN" ]; then
+          if [ "$KRAGENT_REQUIRED" = "1" ]; then
+            task kragent-docker >/dev/null
+          else
+            echo "INFO: qemu-guest-kragent disabled (KRAGENT_REQUIRED=0)"
+          fi
+        fi
+
+        if [ -x "$KRAGENT_BIN" ]; then
+          FILES_ARGS="$FILES_ARGS -files $KRAGENT_BIN:bbin/qemu-guest-kragent"
+        elif [ "$KRAGENT_REQUIRED" = "1" ]; then
+          echo "ERROR: qemu-guest-kragent missing; build failed"
+          exit 1
+        fi
+
+        if [ -r "$SSH_HOST_KEY" ]; then
+          FILES_ARGS="$FILES_ARGS -files $SSH_HOST_KEY:id_rsa"
+        fi
+        if [ -r "$SSH_AUTH_KEYS" ]; then
+          FILES_ARGS="$FILES_ARGS -files $SSH_AUTH_KEYS:authorized_keys"
+        fi
+        if [ -r "$EFI_BOOT_BIN" ]; then
+          FILES_ARGS="$FILES_ARGS -files $EFI_BOOT_BIN:systemd-bootx64.efi"
+        else
+          echo "WARN: systemd-bootx64.efi not found; installer EFI path will fail"
+        fi
+
+        GOOS=linux GOARCH=amd64 GO111MODULE=on u-root -build=bb -format=cpio -o "$INITRAMFS" \
+          -files "$INITBIN:bbin/goos-init" \
+          -files "$INSTALLBIN:bbin/goos-installer" \
+          $FILES_ARGS \
+          -uinitcmd=/bbin/goos-init \
+          -defaultsh=gosh \
+          github.com/u-root/u-root/cmds/core/init \
+          github.com/u-root/u-root/cmds/core/gosh \
+          github.com/u-root/u-root/cmds/core/ip \
+          github.com/u-root/u-root/cmds/core/dhclient \
+          github.com/u-root/u-root/cmds/core/find \
+          github.com/u-root/u-root/cmds/core/kill \
+          github.com/u-root/u-root/cmds/core/ls \
+          github.com/u-root/u-root/cmds/core/cat \
+          github.com/u-root/u-root/cmds/core/true \
+          github.com/u-root/u-root/cmds/core/mkdir \
+          github.com/u-root/u-root/cmds/core/ping \
+          github.com/u-root/u-root/cmds/core/dmesg \
+          github.com/u-root/u-root/cmds/core/insmod \
+          github.com/u-root/u-root/cmds/core/hostname \
+          github.com/u-root/u-root/cmds/core/id \
+          github.com/u-root/u-root/cmds/core/sshd \
+          github.com/u-root/u-root/cmds/core/poweroff \
+          github.com/u-root/u-root/cmds/core/shutdown \
+          github.com/u-root/u-root/cmds/core/ps \
+          github.com/u-root/u-root/cmds/core/uname \
+          github.com/u-root/u-root/cmds/core/uptime
+
+  initramfs-arch:
+    internal: true
+    desc: Build and merge an Arch initramfs with kernel modules
+    deps:
+      - initramfs
+    cmds:
+      - mkdir -p {{.BUILD}}
+      - sudo mkinitcpio -c {{.TASK_DIR}}/mkinitcpio-goos.conf -g {{.INITRAMFS_ARCH}}
+      - sudo chmod a+r {{.INITRAMFS_ARCH}}
+      - cat {{.INITRAMFS_ARCH}} {{.INITRAMFS}} > {{.INITRAMFS_MERGED}}
+
+  iso:
+    desc: Build a GRUB ISO on Linux
+    deps:
+      - initramfs
+      - kernel
+    cmds:
+      - mkdir -p {{.ISODIR}}/boot/grub
+      - cp -f {{.VMLINUX}} {{.ISODIR}}/boot/vmlinuz
+      - cp -f {{.INITRAMFS}} {{.ISODIR}}/boot/initramfs.cpio
+      - cp -f assets/grub/grub.cfg {{.ISODIR}}/boot/grub/grub.cfg
+      - grub-mkrescue -o {{.ISO}} {{.ISODIR}}
+
+  iso-docker:
+    desc: Build a hybrid BIOS+UEFI GRUB ISO using Docker
+    deps:
+      - initramfs
+      - kernel-docker
+    cmds:
+      - mkdir -p {{.ISODIR}}/boot/grub
+      - cp -f {{.VMLINUX}} {{.ISODIR}}/boot/vmlinuz
+      - cp -f {{.INITRAMFS}} {{.ISODIR}}/boot/initramfs.cpio
+      - cp -f assets/grub/grub.cfg {{.ISODIR}}/boot/grub/grub.cfg
+      - |
+        docker run --platform linux/amd64 --rm -v "$(pwd)/{{.BUILD}}:/work" ubuntu:24.04 sh -c '
+          set -e
+          apt-get update >/dev/null 2>&1
+          apt-get install -y --no-install-recommends grub-pc-bin grub-efi-amd64-bin xorriso mtools >/dev/null 2>&1
+          grub-mkrescue -o /work/goos.iso /work/iso'
+
+  qemu:
+    desc: Boot locally with QEMU on Linux
+    deps:
+      - kernel-arch
+      - initramfs
+    cmds:
+      - |
+        set -e
+        if [ -c /dev/kvm ]; then
+          accel="-enable-kvm -cpu host"
+        else
+          accel="-accel tcg"
+        fi
+        initrd="{{.INITRAMFS}}"
+        if [ -r "{{.INITRAMFS_MERGED}}" ]; then
+          initrd="{{.INITRAMFS_MERGED}}"
+        fi
+        qemu-system-x86_64 -m 1024 -nographic $accel \
+          -device virtio-rng-pci \
+          -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
+          -device virtio-serial-pci \
+          -chardev socket,id=qga0,path={{.BUILD}}/qga.sock,server=on,wait=off \
+          -device virtserialport,chardev=qga0,name=org.qemu.guest_agent.0 \
+          -kernel {{.VMLINUX}} \
+          -initrd "$initrd" \
+          -append "console=ttyS0 goos.shell=1"
+
+  qemu-mac:
+    desc: Boot locally with QEMU on macOS
+    deps:
+      - kernel-docker
+      - initramfs
+    cmds:
+      - gzip -kf {{.INITRAMFS}}
+      - |
+        qemu-system-x86_64 -m 1024 -nographic -accel tcg \
+          -device virtio-rng-pci \
+          -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
+          -kernel {{.VMLINUX}} \
+          -initrd {{.INITRAMFS}}.gz \
+          -append "console=ttyS0 goos.shell=1"
+
+  qemu-mac-bridge:
+    desc: Boot locally on macOS with socket_vmnet
+    deps:
+      - kernel-docker
+      - initramfs
+    cmds:
+      - |
+        set -e
+        if [ ! -x /opt/homebrew/opt/socket_vmnet/bin/socket_vmnet_client ]; then
+          echo "ERROR: socket_vmnet_client not found at /opt/homebrew/opt/socket_vmnet/bin/socket_vmnet_client"
+          exit 1
+        fi
+        gzip -kf {{.INITRAMFS}}
+        sudo /opt/homebrew/opt/socket_vmnet/bin/socket_vmnet_client \
+          /var/run/socket_vmnet \
+          qemu-system-x86_64 -m 1024 -nographic -accel tcg \
+          -device virtio-net-pci,netdev=net0 \
+          -netdev socket,id=net0,fd=3 \
+          -kernel {{.VMLINUX}} \
+          -initrd {{.INITRAMFS}}.gz \
+          -append "console=ttyS0 goos.shell=1"
+
+  clean:
+    desc: Remove build artifacts
+    cmds:
+      - rm -rf {{.BUILD}}
