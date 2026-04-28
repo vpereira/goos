@@ -18,6 +18,44 @@ vars:
   UROOT_VER: v0.16.0
   KRAGENT_PKG: github.com/bradfitz/qemu-guest-kragent
 
+x-build-helpers:
+  fetch_efi_bootloader: &fetch_efi_bootloader |
+    set -e
+    if ! command -v docker >/dev/null 2>&1; then
+      echo "ERROR: docker not found; cannot fetch systemd-bootx64.efi"
+      exit 1
+    fi
+    docker run --platform linux/amd64 --rm -v "$(pwd)/{{.BUILD}}:/out" ubuntu:24.04 sh -c '
+      set -e
+      apt-get update >/dev/null 2>&1
+      apt-get install -y --no-install-recommends systemd-boot-efi >/dev/null 2>&1
+      cp /usr/lib/systemd/boot/efi/systemd-bootx64.efi /out/systemd-bootx64.efi'
+
+  extract_kernel_docker: &extract_kernel_docker |
+    set -e
+    if [ -r "{{.VMLINUX}}" ]; then
+      echo "Using existing kernel: {{.VMLINUX}}"
+      exit 0
+    fi
+    echo "Extracting x86_64 kernel from Ubuntu..."
+    docker rm -f goos-kernel-tmp 2>/dev/null || true
+    docker run --platform linux/amd64 --name goos-kernel-tmp ubuntu:24.04 sh -c \
+      "apt-get update && apt-get install -y --no-install-recommends linux-image-generic >/dev/null 2>&1 && cp /boot/vmlinuz-* /vmlinuz"
+    docker cp goos-kernel-tmp:/vmlinuz {{.VMLINUX}}
+    mkdir -p {{.MODROOT}}
+    docker cp goos-kernel-tmp:/lib/modules/. {{.MODROOT}}
+    docker rm goos-kernel-tmp >/dev/null
+    echo "Kernel extracted to {{.VMLINUX}}"
+
+  build_kragent_docker: &build_kragent_docker |
+    set -e
+    if ! command -v docker >/dev/null 2>&1; then
+      echo "ERROR: docker not found; cannot build qemu-guest-kragent"
+      exit 1
+    fi
+    docker run --platform linux/amd64 --rm -v "$(pwd)/{{.BUILD}}:/out" -w /src golang:1.22 sh -c '
+      CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOBIN=/out go install {{.KRAGENT_PKG}}@latest'
+
 tasks:
   default:
     cmds:
@@ -92,53 +130,22 @@ tasks:
     internal: true
     desc: Fetch systemd-bootx64.efi using Docker
     cmds:
-      - |
-        set -e
-        mkdir -p {{.BUILD}}
-        if ! command -v docker >/dev/null 2>&1; then
-          echo "ERROR: docker not found; cannot fetch systemd-bootx64.efi"
-          exit 1
-        fi
-        docker run --platform linux/amd64 --rm -v "$(pwd)/{{.BUILD}}:/out" ubuntu:24.04 sh -c '
-          set -e
-          apt-get update >/dev/null 2>&1
-          apt-get install -y --no-install-recommends systemd-boot-efi >/dev/null 2>&1
-          cp /usr/lib/systemd/boot/efi/systemd-bootx64.efi /out/systemd-bootx64.efi'
+      - mkdir -p {{.BUILD}}
+      - *fetch_efi_bootloader
 
   kernel-docker:
     internal: true
     desc: Extract an amd64 Linux kernel and modules from Docker
     cmds:
-      - |
-        set -e
-        mkdir -p {{.BUILD}}
-        if [ -r "{{.VMLINUX}}" ]; then
-          echo "Using existing kernel: {{.VMLINUX}}"
-          exit 0
-        fi
-        echo "Extracting x86_64 kernel from Ubuntu..."
-        docker rm -f goos-kernel-tmp 2>/dev/null || true
-        docker run --platform linux/amd64 --name goos-kernel-tmp ubuntu:24.04 sh -c \
-          "apt-get update && apt-get install -y --no-install-recommends linux-image-generic >/dev/null 2>&1 && cp /boot/vmlinuz-* /vmlinuz"
-        docker cp goos-kernel-tmp:/vmlinuz {{.VMLINUX}}
-        mkdir -p {{.MODROOT}}
-        docker cp goos-kernel-tmp:/lib/modules/. {{.MODROOT}}
-        docker rm goos-kernel-tmp >/dev/null
-        echo "Kernel extracted to {{.VMLINUX}}"
+      - mkdir -p {{.BUILD}}
+      - *extract_kernel_docker
 
   kragent-docker:
     internal: true
     desc: Build qemu-guest-kragent inside Docker
     cmds:
-      - |
-        set -e
-        mkdir -p {{.BUILD}}
-        if ! command -v docker >/dev/null 2>&1; then
-          echo "ERROR: docker not found; cannot build qemu-guest-kragent"
-          exit 1
-        fi
-        docker run --platform linux/amd64 --rm -v "$(pwd)/{{.BUILD}}:/out" -w /src golang:1.22 sh -c '
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOBIN=/out go install {{.KRAGENT_PKG}}@latest'
+      - mkdir -p {{.BUILD}}
+      - *build_kragent_docker
 
   initramfs:
     internal: true
@@ -150,7 +157,17 @@ tasks:
         set -e
         mkdir -p {{.BUILD}}
         if [ "$(uname -s)" = "Darwin" ]; then
-          task kernel-docker >/dev/null
+          if [ ! -r "{{.VMLINUX}}" ]; then
+            echo "Extracting x86_64 kernel from Ubuntu..."
+            docker rm -f goos-kernel-tmp 2>/dev/null || true
+            docker run --platform linux/amd64 --name goos-kernel-tmp ubuntu:24.04 sh -c \
+              "apt-get update && apt-get install -y --no-install-recommends linux-image-generic >/dev/null 2>&1 && cp /boot/vmlinuz-* /vmlinuz"
+            docker cp goos-kernel-tmp:/vmlinuz {{.VMLINUX}}
+            mkdir -p {{.MODROOT}}
+            docker cp goos-kernel-tmp:/lib/modules/. {{.MODROOT}}
+            docker rm goos-kernel-tmp >/dev/null
+            echo "Kernel extracted to {{.VMLINUX}}"
+          fi
         fi
         go install github.com/u-root/u-root@{{.UROOT_VER}}
 
@@ -201,10 +218,16 @@ tasks:
         while IFS='|' read -r name rel; do
           [ -n "$name" ] || continue
           out="$BUILD/$name.ko"
-          host_zst="/usr/lib/modules/$KVER/$rel.zst"
+          if [ -r "/usr/lib/modules/$KVER/$rel.zst" ]; then
+            host_zst="/usr/lib/modules/$KVER/$rel.zst"
+          elif [ -r "/lib/modules/$KVER/$rel.zst" ]; then
+            host_zst="/lib/modules/$KVER/$rel.zst"
+          else
+            host_zst=""
+          fi
           docker_ko="$MODROOT/$LINUX_KVER/$rel"
           docker_zst="$docker_ko.zst"
-          if command -v zstd >/dev/null 2>&1 && [ -r "$host_zst" ]; then
+          if [ -n "$host_zst" ] && command -v zstd >/dev/null 2>&1 && [ -r "$host_zst" ]; then
             zstd -d -c "$host_zst" > "$out"
             FILES_ARGS="$FILES_ARGS -files $out:lib/modules/$KVER/$rel"
           elif command -v zstd >/dev/null 2>&1 && [ -r "$docker_zst" ]; then
@@ -220,12 +243,17 @@ tasks:
         EOF
 
         if [ ! -r "$EFI_BOOT_BIN" ] && command -v docker >/dev/null 2>&1; then
-          task efi-bootloader >/dev/null
+          docker run --platform linux/amd64 --rm -v "$(pwd)/{{.BUILD}}:/out" ubuntu:24.04 sh -c '
+            set -e
+            apt-get update >/dev/null 2>&1
+            apt-get install -y --no-install-recommends systemd-boot-efi >/dev/null 2>&1
+            cp /usr/lib/systemd/boot/efi/systemd-bootx64.efi /out/systemd-bootx64.efi'
         fi
 
         if [ ! -x "$KRAGENT_BIN" ]; then
           if [ "$KRAGENT_REQUIRED" = "1" ]; then
-            task kragent-docker >/dev/null
+            docker run --platform linux/amd64 --rm -v "$(pwd)/{{.BUILD}}:/out" -w /src golang:1.22 sh -c '
+              CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOBIN=/out go install {{.KRAGENT_PKG}}@latest'
           else
             echo "INFO: qemu-guest-kragent disabled (KRAGENT_REQUIRED=0)"
           fi
