@@ -14,60 +14,35 @@ jobs:
         with:
           go-version: "1.22.x"
 
+      - name: Install task
+        run: |
+          set -eux
+          go install github.com/go-task/task/v3/cmd/task@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
       - name: Install QEMU + ISO tooling
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 grub-pc-bin xorriso mtools
+          sudo apt-get install -y qemu-system-x86 grub-pc-bin grub-efi-amd64-bin xorriso mtools linux-image-generic
 
-      - name: Ensure a kernel is available
+      - name: Build ISO through Taskfile
         run: |
           set -eux
-          sudo apt-get update
-          sudo apt-get install -y linux-image-generic
-          mkdir -p build
-          sudo cp -L "$(ls /boot/vmlinuz-*generic* | tail -n 1)" build/vmlinuz
-          sudo chmod a+r build/vmlinuz
-          file build/vmlinuz
+          task clean
+          task iso
 
-      - name: Build init + initramfs (u-root + uinit)
+      - name: Check ISO boot entries
         run: |
           set -eux
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o build/goos-init ./cmd/init
-
-          # Pin u-root
-          go install github.com/u-root/u-root@v0.15.0
-
-          # Build initramfs:
-          # - include u-root init command so /init exists
-          # - install our binary into /bbin
-          # - run it as uinit
-          GO111MODULE=on u-root -build=bb -format=cpio -o build/initramfs.cpio \
-            -files "build/goos-init:bbin/goos-init" \
-            -uinitcmd="/bbin/goos-init" \
-            -defaultsh=gosh \
-            github.com/u-root/u-root/cmds/core/init \
-            github.com/u-root/u-root/cmds/core/gosh \
-            github.com/u-root/u-root/cmds/core/ip \
-            github.com/u-root/u-root/cmds/core/dhclient \
-            github.com/u-root/u-root/cmds/core/ls \
-            github.com/u-root/u-root/cmds/core/cat \
-            github.com/u-root/u-root/cmds/core/mkdir
-
-      - name: Build GRUB ISO
-        run: |
-          set -eux
-          mkdir -p build/iso/boot/grub
-          cp -f build/vmlinuz build/iso/boot/vmlinuz
-          cp -f build/initramfs.cpio build/iso/boot/initramfs.cpio
-          cp -f assets/grub/grub.cfg build/iso/boot/grub/grub.cfg
-          # grub-mkrescue relies on xorriso. :contentReference[oaicite:4]{index=4}
-          grub-mkrescue -o build/goos.iso build/iso
+          xorriso -indev build/goos.iso -report_el_torito plain | tee build/el-torito.txt
+          grep -q "BIOS" build/el-torito.txt
+          grep -q "UEFI" build/el-torito.txt
 
       - name: Boot smoke test from ISO (expects READY)
         run: |
           set -euxo pipefail
 
-          # Run QEMU in background with TCG (KVM not available on GitHub Actions)
+          # Smoke test the kernel+initramfs produced by task iso.
           qemu-system-x86_64 -m 1024 -nographic -accel tcg \
             -kernel build/vmlinuz \
             -initrd build/initramfs.cpio \
@@ -106,4 +81,5 @@ jobs:
             build/goos.iso
             build/vmlinuz
             build/initramfs.cpio
+            build/el-torito.txt
             build/boot.log
